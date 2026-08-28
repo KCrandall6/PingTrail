@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d2037">
+  <title>PingTrail — Local network health</title>
+  <link rel="icon" type="image/png" href="/assets/pingtrail-logo.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <img src="/assets/pingtrail-logo.png" alt="">
+      <div><strong>PingTrail</strong><span>Track your connection. Find the problem.</span></div>
+    </div>
+    <span class="privacy-pill">● Local only</span>
+  </header>
+
+  <main>
+    <section class="hero card">
+      <div>
+        <div class="status-line"><span id="statusDot" class="status-dot"></span><span id="statusText">Monitoring is off</span></div>
+        <h1 id="heroTitle">Ready when you are.</h1>
+        <p id="heroCopy">Start a session to leave a trail of router and internet health measurements.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="monitorButton" class="primary">Start monitoring</button>
+        <button id="problemButton" class="secondary" disabled>Mark a problem</button>
+      </div>
+    </section>
+
+    <section aria-labelledby="latestHeading">
+      <div class="section-heading">
+        <div><p class="eyebrow">Latest check</p><h2 id="latestHeading">What is happening right now?</h2></div>
+        <span id="lastUpdated">Waiting for a measurement</span>
+      </div>
+      <div class="metrics-grid">
+        <article class="metric card"><span>Router latency</span><strong id="routerLatency">—</strong><small id="routerTarget">Default gateway</small></article>
+        <article class="metric card"><span>Internet latency</span><strong id="internetLatency">—</strong><small>Average of external targets</small></article>
+        <article class="metric card"><span>Packet loss</span><strong id="packetLoss">—</strong><small>Worst in latest check</small></article>
+        <article class="metric card"><span>Jitter</span><strong id="jitter">—</strong><small>Average latest variation</small></article>
+      </div>
+    </section>
+
+    <section class="content-grid">
+      <article class="card chart-card">
+        <div class="section-heading">
+          <div><p class="eyebrow">Current session</p><h2>Latency trail</h2></div>
+          <div class="legend"><span class="router-key">Router</span><span class="internet-key">Internet</span></div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="latencyChart" aria-label="Latency over time"></canvas>
+          <div id="chartEmpty" class="empty">The chart will appear after the first check.</div>
+        </div>
+      </article>
+      <article class="card speed-card">
+        <p class="eyebrow">Latest speed test</p>
+        <h2 id="speedHeadline">Not tested yet</h2>
+        <div class="speed-values">
+          <div><span>Download</span><strong id="downloadSpeed">—</strong></div>
+          <div><span>Upload</span><strong id="uploadSpeed">—</strong></div>
+          <div><span>Latency</span><strong id="speedLatency">—</strong></div>
+        </div>
+        <small id="speedTime">Runs once near session start, then hourly.</small>
+      </article>
+    </section>
+
+    <section class="content-grid lower">
+      <article class="card">
+        <p class="eyebrow">Session summary</p>
+        <h2 id="duration">00:00:00</h2>
+        <div class="summary-grid">
+          <div><span>Router average</span><strong id="avgRouter">—</strong></div>
+          <div><span>Internet average</span><strong id="avgInternet">—</strong></div>
+          <div><span>Maximum latency</span><strong id="maxLatency">—</strong></div>
+          <div><span>Average jitter</span><strong id="avgJitter">—</strong></div>
+          <div><span>Loss events</span><strong id="lossEvents">0</strong></div>
+          <div><span>Worst loss</span><strong id="worstLoss">—</strong></div>
+          <div><span>Samples stored</span><strong id="sampleCount">0</strong></div>
+          <div><span>Problem marks</span><strong id="problemCount">0</strong></div>
+        </div>
+      </article>
+      <article class="card">
+        <p class="eyebrow">Recent sessions</p>
+        <h2>Your monitoring trail</h2>
+        <div id="sessions" class="sessions"><p class="empty">No sessions yet.</p></div>
+      </article>
+    </section>
+  </main>
+
+  <dialog id="problemDialog">
+    <form id="problemForm" method="dialog">
+      <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      <p class="eyebrow">Mark this moment</p>
+      <h2>What did you notice?</h2>
+      <p>The timestamp is saved alongside nearby measurements.</p>
+      <label for="problemNote">Optional note</label>
+      <textarea id="problemNote" maxlength="500" placeholder="Game lagged, video froze…"></textarea>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary">Cancel</button>
+        <button id="saveProblem" value="default" class="primary">Save marker</button>
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

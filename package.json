@@ -1,0 +1,27 @@
+{
+  "name": "pingtrail",
+  "version": "1.0.0",
+  "description": "Track your internet connection. Find the problem.",
+  "private": true,
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test"
+  },
+  "keywords": [
+    "network-monitoring",
+    "ping",
+    "sqlite",
+    "local-first"
+  ],
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^12.2.0",
+    "express": "^5.1.0"
+  }
+}
