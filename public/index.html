@@ -27,6 +27,7 @@
       <div class="hero-actions">
         <button id="monitorButton" class="primary">Start monitoring</button>
         <button id="problemButton" class="secondary" disabled>Mark a problem</button>
+        <button id="connectionTestButton" class="secondary" disabled>Run Connection Test</button>
       </div>
     </section>
 
@@ -36,10 +37,10 @@
         <span id="lastUpdated">Waiting for a measurement</span>
       </div>
       <div class="metrics-grid">
-        <article class="metric card"><span>Router latency</span><strong id="routerLatency">—</strong><small id="routerTarget">Default gateway</small></article>
-        <article class="metric card"><span>Internet latency</span><strong id="internetLatency">—</strong><small>Average of external targets</small></article>
-        <article class="metric card"><span>Packet loss</span><strong id="packetLoss">—</strong><small>Worst in latest check</small></article>
-        <article class="metric card"><span>Jitter</span><strong id="jitter">—</strong><small>Average latest variation</small></article>
+        <article class="metric card"><span title="Round-trip time between this computer and its default gateway.">Router latency ⓘ</span><strong id="routerLatency">—</strong><small id="routerTarget">Default gateway</small></article>
+        <article class="metric card"><span title="Round-trip time to targets beyond your home network.">Internet latency ⓘ</span><strong id="internetLatency">—</strong><small>Average of external targets</small></article>
+        <article class="metric card"><span title="The percentage of ping requests that received no reply.">Packet loss ⓘ</span><strong id="packetLoss">—</strong><small>Worst in latest check</small></article>
+        <article class="metric card"><span title="How much latency varies between consecutive replies.">Jitter ⓘ</span><strong id="jitter">—</strong><small>Average latest variation</small></article>
       </div>
     </section>
 
@@ -55,15 +56,24 @@
         </div>
       </article>
       <article class="card speed-card">
-        <p class="eyebrow">Latest speed test</p>
+        <p class="eyebrow">Latest connection test</p>
         <h2 id="speedHeadline">Not tested yet</h2>
+        <p id="testPhase" class="test-phase" aria-live="polite"></p>
         <div class="speed-values">
-          <div><span>Download</span><strong id="downloadSpeed">—</strong></div>
-          <div><span>Upload</span><strong id="uploadSpeed">—</strong></div>
-          <div><span>Latency</span><strong id="speedLatency">—</strong></div>
+          <div><span title="Internet latency while the connection is relatively idle.">Baseline latency ⓘ</span><strong id="baselineLatency">—</strong><small id="baselineDetails">Jitter — • Loss —</small></div>
+          <div><span title="Downloaded data per second during the test.">Download ⓘ</span><strong id="downloadSpeed">—</strong><small>Loaded: <b id="downloadLoaded">—</b> • Increase: <b id="downloadIncrease">—</b></small></div>
+          <div><span title="Uploaded data per second during the test.">Upload ⓘ</span><strong id="uploadSpeed">—</strong><small>Loaded: <b id="uploadLoaded">—</b> • Increase: <b id="uploadIncrease">—</b></small></div>
         </div>
-        <small id="speedTime">Runs once near session start, then hourly.</small>
+        <small id="speedTime">Run one manually, or wait for the hourly automatic test.</small>
       </article>
+    </section>
+
+    <section class="card help-card">
+      <details><summary>Understanding your results</summary><div class="help-grid">
+        <div><h3>Everyday monitoring</h3><p><strong>Router latency</strong> measures the local path to your gateway. <strong>Internet latency</strong> measures paths beyond it. Keeping them separate helps narrow down where a change may begin.</p><p><strong>Packet loss</strong> means requests did not return. <strong>Jitter</strong> is variation in delay; high jitter can make games, voice, and video feel uneven.</p></div>
+        <div><h3>Connection test</h3><p><strong>Unloaded latency</strong> is the idle baseline. <strong>Loaded latency</strong> is measured concurrently while download or upload traffic fills the connection. The <strong>increase</strong> is loaded minus baseline latency.</p><p>Loaded latency matters because calls, games, and other real-time apps still need quick responses while someone transfers data.</p></div>
+        <div><h3>Diagnostic clues, not conclusions</h3><ul><li>Router latency rising may point to Wi-Fi, LAN, or router conditions.</li><li>A steady router with rising internet latency may point beyond the local network.</li><li>Delay rising mainly under load may suggest queueing, congestion, or bufferbloat behavior.</li></ul></div>
+      </div></details>
     </section>
 
     <section class="content-grid lower">

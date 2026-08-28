@@ -1,0 +1,1317 @@
+diff --git a/README.md b/README.md
+index ed5528d9ef47d35232ba70a3ae16e8fc05bd6f13..ff9c841fa542a791a5ea7cd16306e98d45b03721 100644
+--- a/README.md
++++ b/README.md
+@@ -1,155 +1,185 @@
+ # PingTrail
+ 
+-![PingTrail logo](edited-photo.png)
++<img src="edited-photo.png" alt="PingTrail logo" width="240">
+ 
+ **Track your internet connection. Find the problem.**
+ 
+ PingTrail is a small, open-source, local-first network monitor for diagnosing intermittent home network and internet problems. It samples your router and two independent internet targets, keeps the results in SQLite on your computer, and presents the current session in a friendly browser dashboard.
+ 
+ > **MVP status:** PingTrail is ready for local testing. Windows is the primary target; the measurement parser and default-route detection also support common Linux and macOS installations.
+ 
+ ## What the MVP includes
+ 
+ - Backend monitoring that continues when the browser is closed
+ - A fresh retained session each time monitoring starts
+ - Automatic IPv4 default-gateway detection
+ - Five pings each to the router, `1.1.1.1`, and `8.8.8.8` every 30 seconds
+ - SQLite persistence of success, packet loss, and unreachable targets
+ - Start/stop control, latest check, live duration, summaries, recent sessions, and a latency chart
+ - Optional timestamped “Mark Problem” notes, shown as red dashed lines on the chart
+-- A guarded speed test near session start and approximately hourly thereafter
++- A manual or hourly comprehensive connection test for throughput and latency under load
+ - Local-only HTTP binding and no accounts, telemetry, or cloud database
+ 
+ ## Windows quick start
+ 
+ ### Prerequisites
+ 
+ 1. Install the current [Node.js 20 LTS or newer](https://nodejs.org/). The normal Windows installer includes npm.
+ 2. Git is optional if you download a ZIP. If using Git, clone this repository.
+ 3. Windows' built-in `ping.exe` and `route.exe` must be available. This is true on normal Windows installations and does not generally require Administrator privileges.
+ 
+ ### Install and run
+ 
+ Open **PowerShell** or **Command Prompt** in the PingTrail folder:
+ 
+ ```powershell
+ npm install
+ npm start
+ ```
+ 
+ Then open <http://localhost:3000>. Press **Ctrl+C** in the terminal to stop PingTrail. Closing only the dashboard tab does not stop backend monitoring.
+ 
+ For development with automatic server restarts:
+ 
+ ```powershell
+ npm run dev
+ ```
+ 
+ Run the automated tests with:
+ 
+ ```powershell
+ npm test
+ ```
+ 
+ `better-sqlite3` normally installs a prebuilt Windows binary. If npm has to compile it instead, install the Visual Studio Build Tools with the “Desktop development with C++” workload and retry `npm install`.
+ 
+ ## What PingTrail measures
+ 
+ Every monitoring check shares one timestamp and contains one sample per target. Each sample stores:
+ 
+ | Measurement | Meaning |
+ | --- | --- |
+ | Target / type | The detected router (`router`) or an internet endpoint (`external`) |
+ | Packets sent / received | How many ICMP echo requests were attempted and answered |
+ | Packet loss | `(sent - received) / sent × 100`; any value above 0% is a loss event |
+ | Minimum / average / maximum latency | Round-trip time (RTT) of successful replies in milliseconds |
+ | Jitter | Mean absolute difference between consecutive successful RTTs |
+ 
++**Latency** is the round-trip travel time for a small request and reply. **Router latency** covers
++the local path to the default gateway, while **internet latency** covers external targets. Comparing
++them can help distinguish a possible Wi-Fi/LAN/router change from one farther upstream. **Packet
++loss** is the percentage of requests that receive no reply, and **jitter** describes inconsistent
++latency that may be noticeable in games, voice, or video calls.
++
++The comprehensive test also records **unloaded latency** while the connection is relatively idle,
++then **loaded latency** while download and upload transfers are actually active. Download/upload
++latency increase is loaded latency minus the unloaded baseline. **Download and upload throughput**
++describe how many megabits are transferred per second in each direction.
++
+ For example, successful RTTs of 10, 14, 11, and 17 ms have jitter `(4 + 3 + 6) / 3 = 4.33 ms`. This simple variation measure is understandable, useful for short ping groups, and does not disguise sudden changes. A group with fewer than two successful replies records jitter as 0 because variation cannot be estimated. A fully unreachable target records 100% loss and null latency values rather than crashing the app.
+ 
+ ### Interpreting the trail
+ 
+ - **Router latency/loss rises while external measurements rise:** the likely trouble is the local Wi-Fi, LAN, or router path.
+ - **Router stays healthy while both external targets degrade:** the likely trouble is upstream, such as the modem, ISP, or broader internet path.
+ - **Only one external target degrades:** that target or route may be the issue; compare both external lines before concluding the whole connection is unhealthy.
+ - **Jitter rises:** round-trip timing is becoming less consistent, which can affect games, calls, and streaming even when average latency looks acceptable.
+ 
+ These are diagnostic clues, not definitive fault attribution. Some routers and networks deprioritize or block ICMP ping traffic.
+ 
+-## Speed testing
++## Comprehensive connection testing
++
++The test uses Cloudflare's public speed-test endpoints over HTTPS and requires no account. It:
++
++1. sends multiple native pings to establish an idle baseline;
++2. repeatedly downloads test data while separate native pings run concurrently;
++3. repeatedly uploads test data while separate native pings run concurrently; and
++4. compares each loaded average with the baseline.
++
++Each load phase lasts at least eight seconds by default so the latency samples are taken while the
++transfer is stressing the connection, rather than substituting a server-reported ping. Loaded
++latency increases can reveal responsiveness problems under load, including possible queueing,
++bufferbloat, or congestion behavior, but one result is a clue rather than a diagnosis. The figures
++are practical local estimates, not a reproduction of a commercial benchmark.
+ 
+-The speed test uses Cloudflare's public speed-test endpoints over HTTPS and requires no account. It performs five lightweight latency requests, downloads 25 MB, and uploads 10 MB. The result is a practical throughput estimate, not a certified ISP benchmark. It starts a few seconds into a session and repeats about once per hour.
++The first automatic test is scheduled about one hour after monitoring starts and repeats hourly;
++startup remains lightweight. The dashboard can run the identical test manually at any time while
++monitoring is active. An in-process guard prevents manual and automatic tests from overlapping.
+ 
+-Speed and ping jobs use independent in-process guards. A second copy of either job cannot overlap the first. Monitoring schedules the next 30-second delay only after the current job finishes. Speed-test failures are saved with their error and never terminate monitoring.
++Connection-test and ping jobs use independent in-process guards. Monitoring schedules the next
++30-second delay only after the current lightweight job finishes. Connection-test failures or partial
++download/upload results are saved and never terminate monitoring.
+ 
+ ## Local data and privacy
+ 
+ The Express server binds to `127.0.0.1` by default, so other devices on the LAN cannot open the dashboard. Monitoring data is not uploaded by PingTrail. The speed test necessarily exchanges test bytes with `speed.cloudflare.com`; ping checks send ICMP requests to the configured targets.
+ 
+ The SQLite database is created at:
+ 
+ ```text
+ data/pingtrail.sqlite
+ ```
+ 
+ SQLite write-ahead-log companion files may appear beside it while the app is running. The entire `data/` directory is ignored by Git. To reset local history, stop PingTrail and delete that directory. To back it up, stop PingTrail first and copy the SQLite file.
+ 
+ If the Node process ends unexpectedly, an active database session is marked `interrupted` at the next startup. PingTrail does not automatically resume monitoring after a process restart. Reopening only the browser preserves and displays the backend's current state.
+ 
+ ## Configuration
+ 
+ Defaults work without configuration. Advanced users can set these environment variables before `npm start`:
+ 
+ | Variable | Default | Purpose |
+ | --- | --- | --- |
+ | `PORT` | `3000` | Local dashboard port |
+ | `PINGTRAIL_HOST` | `127.0.0.1` | Listen address; changing this may expose private data on the LAN |
+ | `PINGTRAIL_DB_PATH` | `data/pingtrail.sqlite` | SQLite file path |
+ | `PINGTRAIL_MONITOR_INTERVAL_MS` | `30000` | Delay between completed monitoring jobs |
+ | `PINGTRAIL_PING_COUNT` | `5` | Pings per target per check |
+ | `PINGTRAIL_PING_TIMEOUT_MS` | `5000` | Per-ping timeout |
+ | `PINGTRAIL_EXTERNAL_TARGETS` | `1.1.1.1,8.8.8.8` | Comma-separated IPv4 targets |
+ | `PINGTRAIL_SPEED_INTERVAL_MS` | `3600000` | Speed-test interval |
+ | `PINGTRAIL_SPEED_DOWNLOAD_BYTES` | `25000000` | Download test size |
+ | `PINGTRAIL_SPEED_UPLOAD_BYTES` | `10000000` | Upload test size |
++| `PINGTRAIL_CONNECTION_MIN_LOAD_MS` | `8000` | Minimum duration of each loaded phase |
++| `PINGTRAIL_CONNECTION_BASELINE_PINGS` | `8` | Pings used for the unloaded baseline |
+ | `PINGTRAIL_CHART_POINT_LIMIT` | `500` | Maximum raw samples returned for the chart |
+ 
+ PowerShell example:
+ 
+ ```powershell
+ $env:PORT = "3100"
+ $env:PINGTRAIL_PING_COUNT = "4"
+ npm start
+ ```
+ 
+ ## Technical choices and limitations
+ 
+ - **Ping:** Node spawns the operating system's native ping command without a shell. Windows uses `ping -n <count> -w <milliseconds>`. Individual `time=` replies are parsed so calculations do not depend on localized summary labels. Windows reports sub-millisecond replies as `time<1ms`; PingTrail estimates these as 0.5 ms.
+ - **Gateway:** Windows' numeric IPv4 route table (`route print -4 0.0.0.0`) is read and the active default route is used. Linux uses `ip -4 route show default`; macOS uses `route -n get default`.
+ - **SQLite:** `better-sqlite3` provides simple transactions and prepared statements. WAL mode improves read/write coexistence. Indexed timestamps, session IDs, check IDs, and target fields support later historical analysis.
+ - **Permissions/firewalls:** PingTrail does not need Administrator rights in typical Windows setups. A firewall, VPN, security product, or network policy may block ICMP or route commands; those conditions appear as unavailable gateway or loss. HTTPS access to `speed.cloudflare.com` is needed only for speed tests.
+ - **Sleep:** The MVP monitors only while the computer is awake. A future optional Windows adapter can call `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` while monitoring, which keeps the system awake without requesting `ES_DISPLAY_REQUIRED`, and clear it on stop/exit. This is intentionally not implemented until its lifecycle can be validated on Windows.
+-- **Speed estimates:** One server and finite transfers cannot characterize every connection. VPNs, proxies, Wi-Fi contention, and very fast links can influence the number.
++- **Connection-test estimates:** One server and finite transfers cannot characterize every connection. VPNs, proxies, Wi-Fi contention, ICMP prioritization, and very fast links can influence the numbers. Test manually on Windows to confirm local firewall and Cloudflare endpoint access.
+ 
+ ## Project layout
+ 
+ ```text
+ src/app.js          Express API and static dashboard
+ src/database.js     SQLite schema and queries
+ src/monitor.js      Session scheduler and overlap guards
+ src/network.js      Gateway detection, native ping, parsing, jitter
+ src/speed-test.js   Account-free HTTPS throughput test
+ src/server.js       Local server lifecycle and clean shutdown
+ public/             Plain HTML, CSS, JavaScript, and derived logo asset
+ test/               Node test-runner unit and service tests
+ ```
+ 
+ The original logo remains at `edited-photo.png`; `public/assets/pingtrail-logo.png` is a derived copy used in the header and as the favicon.
+ 
+ ## Contributing
+ 
+ Issues and focused pull requests are welcome. Please keep PingTrail local-first, dependency-light, and friendly to non-technical home users. Do not commit databases, logs, `node_modules`, machine-specific configuration, or temporary speed-test data.
+ 
+ ## License
+ 
+-PingTrail is available under the [MIT License](LICENSE).
+\ No newline at end of file
++PingTrail is available under the [MIT License](LICENSE).
+diff --git a/public/app.js b/public/app.js
+index 3ce9adaa38384c9865b06a480d7eaefaad2af5e0..79812325e70ced4e7509e56d419296b20d42572f 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -1,35 +1,39 @@
+ 'use strict';
+ 
+ const elements = Object.fromEntries([...document.querySelectorAll('[id]')].map((element) => [element.id, element]));
+ let state = { active: false };
+ let durationTimer;
+ 
+ function number(value, unit = ' ms', digits = 1) {
+   return value == null ? '—' : `${Number(value).toFixed(digits)}${unit}`;
+ }
+ 
++function increase(value) {
++  return value == null ? '—' : `${value >= 0 ? '+' : ''}${Number(value).toFixed(1)} ms`;
++}
++
+ function average(values) {
+   const present = values.filter((value) => value != null);
+   return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
+ }
+ 
+ function formatDuration(startedAt, endedAt) {
+   const seconds = Math.max(0, Math.floor((new Date(endedAt || Date.now()) - new Date(startedAt)) / 1000));
+   return [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60].map((part) => String(part).padStart(2, '0')).join(':');
+ }
+ 
+ function formatTime(value) {
+   return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—';
+ }
+ 
+ async function api(path, options) {
+   const response = await fetch(path, { headers: { 'content-type': 'application/json' }, ...options });
+   const body = await response.json();
+   if (!response.ok) throw new Error(body.error || 'Request failed');
+   return body;
+ }
+ 
+ function toast(message) {
+   elements.toast.textContent = message;
+   elements.toast.classList.add('show');
+   setTimeout(() => elements.toast.classList.remove('show'), 2600);
+@@ -108,108 +112,124 @@ function drawChart(samples = [], problems = []) {
+       drawing = true;
+     });
+     context.stroke();
+   }
+   line('router', '#ff6814');
+   line('external', '#2986cc');
+   context.fillStyle = '#83909d';
+   const timeOptions = { hour: '2-digit', minute: '2-digit' };
+   const startLabel = new Date(points[0].time).toLocaleTimeString([], timeOptions);
+   const endLabel = new Date(points.at(-1).time).toLocaleTimeString([], timeOptions);
+   context.fillText(startLabel, padding.left, height - 7);
+   context.fillText(endLabel, width - padding.right - context.measureText(endLabel).width, height - 7);
+ }
+ 
+ function render(nextState) {
+   state = nextState;
+   const active = state.active;
+   elements.statusDot.classList.toggle('active', active);
+   elements.statusText.textContent = active ? 'Monitoring active' : 'Monitoring is off';
+   elements.heroTitle.textContent = active ? 'Watching your connection.' : 'Ready when you are.';
+   elements.heroCopy.textContent = active
+     ? `Session #${state.session.id} • Gateway ${state.gateway || 'being detected'}`
+     : 'Start a session to leave a trail of router and internet health measurements.';
+   elements.monitorButton.textContent = active ? 'Stop monitoring' : 'Start monitoring';
+   elements.problemButton.disabled = !active;
++  elements.connectionTestButton.disabled = !active || state.speedTestRunning;
++  elements.connectionTestButton.textContent = state.speedTestRunning ? 'Connection Test Running…' : 'Run Connection Test';
+ 
+   const checks = state.latestCheck || [];
+   const router = checks.find((sample) => sample.targetType === 'router');
+   const external = checks.filter((sample) => sample.targetType === 'external');
+   elements.routerLatency.textContent = number(router?.avgLatency);
+   elements.routerTarget.textContent = router?.target || 'Default gateway';
+   elements.internetLatency.textContent = number(average(external.map((sample) => sample.avgLatency)));
+   elements.packetLoss.textContent = number(checks.length ? Math.max(...checks.map((sample) => sample.packetLoss)) : null, '%');
+   elements.jitter.textContent = number(average(checks.map((sample) => sample.jitter)));
+   elements.lastUpdated.textContent = checks[0] ? `Measured ${formatTime(checks[0].recordedAt)}` : 'Waiting for a measurement';
+ 
+   const summary = state.summary || {};
+   elements.avgRouter.textContent = number(summary.averageRouterLatency);
+   elements.avgInternet.textContent = number(summary.averageInternetLatency);
+   elements.maxLatency.textContent = number(summary.maximumLatency);
+   elements.avgJitter.textContent = number(summary.averageJitter);
+   elements.lossEvents.textContent = summary.packetLossEvents || 0;
+   elements.worstLoss.textContent = number(summary.worstPacketLoss, '%');
+   elements.sampleCount.textContent = summary.sampleCount || 0;
+   elements.problemCount.textContent = (state.problems || []).length;
+   elements.duration.textContent = active ? formatDuration(state.session.startedAt) : '00:00:00';
+ 
+   const speed = state.latestSpeedTest;
+   elements.speedHeadline.textContent = state.speedTestRunning
+     ? 'Test in progress…'
+-    : speed?.error ? 'Test unavailable' : speed ? 'Connection throughput' : 'Not tested yet';
++    : speed?.status === 'failed' ? 'Test unavailable' : speed?.status === 'partial' ? 'Partial result' : speed ? 'Connection results' : 'Not tested yet';
++  const phaseLabels = { baseline: 'Measuring baseline…', download: 'Testing download…', upload: 'Testing upload…' };
++  elements.testPhase.textContent = state.speedTestRunning ? phaseLabels[state.connectionTestPhase] || 'Running connection test…' : '';
++  elements.baselineLatency.textContent = number(speed?.unloadedLatency);
++  elements.baselineDetails.textContent = `Jitter ${number(speed?.unloadedJitter)} • Loss ${number(speed?.unloadedPacketLoss, '%')}`;
+   elements.downloadSpeed.textContent = number(speed?.downloadMbps, ' Mbps');
+   elements.uploadSpeed.textContent = number(speed?.uploadMbps, ' Mbps');
+-  elements.speedLatency.textContent = number(speed?.latency);
++  elements.downloadLoaded.textContent = number(speed?.downloadLoadedLatency);
++  elements.downloadIncrease.textContent = increase(speed?.downloadLatencyIncrease);
++  elements.uploadLoaded.textContent = number(speed?.uploadLoadedLatency);
++  elements.uploadIncrease.textContent = increase(speed?.uploadLatencyIncrease);
+   elements.speedTime.textContent = speed
+-    ? speed.error ? `${formatTime(speed.recordedAt)} • ${speed.error}` : `Measured ${formatTime(speed.recordedAt)}`
+-    : 'Runs once near session start, then hourly.';
++    ? `${formatTime(speed.recordedAt)} • ${speed.triggerType === 'manual' ? 'Manual' : 'Automatic'}${speed.error ? ` • ${speed.error}` : ''}`
++    : 'Run one manually, or wait for the hourly automatic test.';
+   drawChart(state.chart, state.problems);
+ }
+ 
+ async function refresh() {
+   try {
+     render(await api('/api/state'));
+   } catch (error) {
+     toast(error.message);
+   }
+ }
+ 
+ async function refreshSessions() {
+   try {
+     const sessions = await api('/api/sessions');
+     const rows = sessions.map((session) => `<div class="session-row"><strong>Session #${session.id}</strong><span>${session.status}</span><small>${formatTime(session.startedAt)}</small><small>${session.sampleCount} samples</small></div>`);
+     elements.sessions.innerHTML = rows.length ? rows.join('') : '<p class="empty">No sessions yet.</p>';
+   } catch (error) {
+     elements.sessions.innerHTML = '<p class="empty">History unavailable.</p>';
+   }
+ }
+ 
+ elements.monitorButton.addEventListener('click', async () => {
+   elements.monitorButton.disabled = true;
+   try {
+     const endpoint = state.active ? '/api/monitor/stop' : '/api/monitor/start';
+     await api(endpoint, { method: 'POST' });
+     await Promise.all([refresh(), refreshSessions()]);
+   } catch (error) { toast(error.message); }
+   finally { elements.monitorButton.disabled = false; }
+ });
+ elements.problemButton.addEventListener('click', () => elements.problemDialog.showModal());
++elements.connectionTestButton.addEventListener('click', async () => {
++  elements.connectionTestButton.disabled = true;
++  try {
++    await api('/api/connection-test', { method: 'POST' });
++    await refresh();
++  } catch (error) { toast(error.message); }
++});
+ elements.problemForm.addEventListener('submit', async (event) => {
+   if (event.submitter?.value === 'cancel') return;
+   event.preventDefault();
+   try {
+     await api('/api/problems', {
+       method: 'POST',
+       body: JSON.stringify({ note: elements.problemNote.value })
+     });
+     elements.problemDialog.close();
+     elements.problemForm.reset();
+     toast('Problem marked on the trail');
+     await refresh();
+   } catch (error) { toast(error.message); }
+ });
+ window.addEventListener('resize', () => drawChart(state.chart, state.problems));
+ setInterval(refresh, 5_000);
+ durationTimer = setInterval(() => {
+   if (state.active) elements.duration.textContent = formatDuration(state.session.startedAt);
+ }, 1_000);
+-Promise.all([refresh(), refreshSessions()]);
+\ No newline at end of file
++Promise.all([refresh(), refreshSessions()]);
+diff --git a/public/index.html b/public/index.html
+index 04fdcbd7e07c6a635bc8d99c3e04dfea5a629058..f2ac2bdb5feee0a49006b21e4388a1ad7d99c687 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -4,106 +4,116 @@
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+   <meta name="theme-color" content="#0d2037">
+   <title>PingTrail — Local network health</title>
+   <link rel="icon" type="image/png" href="/assets/pingtrail-logo.png">
+   <link rel="stylesheet" href="/styles.css">
+ </head>
+ <body>
+   <header class="site-header">
+     <div class="brand">
+       <img src="/assets/pingtrail-logo.png" alt="">
+       <div><strong>PingTrail</strong><span>Track your connection. Find the problem.</span></div>
+     </div>
+     <span class="privacy-pill">● Local only</span>
+   </header>
+ 
+   <main>
+     <section class="hero card">
+       <div>
+         <div class="status-line"><span id="statusDot" class="status-dot"></span><span id="statusText">Monitoring is off</span></div>
+         <h1 id="heroTitle">Ready when you are.</h1>
+         <p id="heroCopy">Start a session to leave a trail of router and internet health measurements.</p>
+       </div>
+       <div class="hero-actions">
+         <button id="monitorButton" class="primary">Start monitoring</button>
++        <button id="connectionTestButton" class="secondary" disabled>Run Connection Test</button>
+         <button id="problemButton" class="secondary" disabled>Mark a problem</button>
+       </div>
+     </section>
+ 
+     <section aria-labelledby="latestHeading">
+       <div class="section-heading">
+         <div><p class="eyebrow">Latest check</p><h2 id="latestHeading">What is happening right now?</h2></div>
+         <span id="lastUpdated">Waiting for a measurement</span>
+       </div>
+       <div class="metrics-grid">
+-        <article class="metric card"><span>Router latency</span><strong id="routerLatency">—</strong><small id="routerTarget">Default gateway</small></article>
+-        <article class="metric card"><span>Internet latency</span><strong id="internetLatency">—</strong><small>Average of external targets</small></article>
+-        <article class="metric card"><span>Packet loss</span><strong id="packetLoss">—</strong><small>Worst in latest check</small></article>
+-        <article class="metric card"><span>Jitter</span><strong id="jitter">—</strong><small>Average latest variation</small></article>
++        <article class="metric card"><span title="Round-trip time between this computer and its default gateway.">Router latency ⓘ</span><strong id="routerLatency">—</strong><small id="routerTarget">Default gateway</small></article>
++        <article class="metric card"><span title="Round-trip time to targets beyond your home network.">Internet latency ⓘ</span><strong id="internetLatency">—</strong><small>Average of external targets</small></article>
++        <article class="metric card"><span title="The percentage of ping requests that received no reply.">Packet loss ⓘ</span><strong id="packetLoss">—</strong><small>Worst in latest check</small></article>
++        <article class="metric card"><span title="How much latency varies between consecutive replies.">Jitter ⓘ</span><strong id="jitter">—</strong><small>Average latest variation</small></article>
+       </div>
+     </section>
+ 
+     <section class="content-grid">
+       <article class="card chart-card">
+         <div class="section-heading">
+           <div><p class="eyebrow">Current session</p><h2>Latency trail</h2></div>
+           <div class="legend"><span class="router-key">Router</span><span class="internet-key">Internet</span></div>
+         </div>
+         <div class="chart-wrap">
+           <canvas id="latencyChart" aria-label="Latency over time"></canvas>
+           <div id="chartEmpty" class="empty">The chart will appear after the first check.</div>
+         </div>
+       </article>
+       <article class="card speed-card">
+-        <p class="eyebrow">Latest speed test</p>
++        <p class="eyebrow">Latest connection test</p>
+         <h2 id="speedHeadline">Not tested yet</h2>
++        <p id="testPhase" class="test-phase" aria-live="polite"></p>
+         <div class="speed-values">
+-          <div><span>Download</span><strong id="downloadSpeed">—</strong></div>
+-          <div><span>Upload</span><strong id="uploadSpeed">—</strong></div>
+-          <div><span>Latency</span><strong id="speedLatency">—</strong></div>
++          <div><span title="Internet latency while the connection is relatively idle.">Baseline latency ⓘ</span><strong id="baselineLatency">—</strong><small id="baselineDetails">Jitter — • Loss —</small></div>
++          <div><span title="Downloaded data per second during the test.">Download ⓘ</span><strong id="downloadSpeed">—</strong><small>Loaded: <b id="downloadLoaded">—</b> • Increase: <b id="downloadIncrease">—</b></small></div>
++          <div><span title="Uploaded data per second during the test.">Upload ⓘ</span><strong id="uploadSpeed">—</strong><small>Loaded: <b id="uploadLoaded">—</b> • Increase: <b id="uploadIncrease">—</b></small></div>
+         </div>
+-        <small id="speedTime">Runs once near session start, then hourly.</small>
++        <small id="speedTime">Run one manually, or wait for the hourly automatic test.</small>
+       </article>
+     </section>
+ 
++    <section class="card help-card">
++      <details><summary>Understanding your results</summary><div class="help-grid">
++        <div><h3>Everyday monitoring</h3><p><strong>Router latency</strong> measures the local path to your gateway. <strong>Internet latency</strong> measures paths beyond it. Keeping them separate helps narrow down where a change may begin.</p><p><strong>Packet loss</strong> means requests did not return. <strong>Jitter</strong> is variation in delay; high jitter can make games, voice, and video feel uneven.</p></div>
++        <div><h3>Connection test</h3><p><strong>Unloaded latency</strong> is the idle baseline. <strong>Loaded latency</strong> is measured concurrently while download or upload traffic fills the connection. The <strong>increase</strong> is loaded minus baseline latency.</p><p>Loaded latency matters because calls, games, and other real-time apps still need quick responses while someone transfers data.</p></div>
++        <div><h3>Diagnostic clues, not conclusions</h3><ul><li>Router latency rising may point to Wi-Fi, LAN, or router conditions.</li><li>A steady router with rising internet latency may point beyond the local network.</li><li>Delay rising mainly under load may suggest queueing, congestion, or bufferbloat behavior.</li></ul></div>
++      </div></details>
++    </section>
++
+     <section class="content-grid lower">
+       <article class="card">
+         <p class="eyebrow">Session summary</p>
+         <h2 id="duration">00:00:00</h2>
+         <div class="summary-grid">
+           <div><span>Router average</span><strong id="avgRouter">—</strong></div>
+           <div><span>Internet average</span><strong id="avgInternet">—</strong></div>
+           <div><span>Maximum latency</span><strong id="maxLatency">—</strong></div>
+           <div><span>Average jitter</span><strong id="avgJitter">—</strong></div>
+           <div><span>Loss events</span><strong id="lossEvents">0</strong></div>
+           <div><span>Worst loss</span><strong id="worstLoss">—</strong></div>
+           <div><span>Samples stored</span><strong id="sampleCount">0</strong></div>
+           <div><span>Problem marks</span><strong id="problemCount">0</strong></div>
+         </div>
+       </article>
+       <article class="card">
+         <p class="eyebrow">Recent sessions</p>
+         <h2>Your monitoring trail</h2>
+         <div id="sessions" class="sessions"><p class="empty">No sessions yet.</p></div>
+       </article>
+     </section>
+   </main>
+ 
+   <dialog id="problemDialog">
+     <form id="problemForm" method="dialog">
+       <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+       <p class="eyebrow">Mark this moment</p>
+       <h2>What did you notice?</h2>
+       <p>The timestamp is saved alongside nearby measurements.</p>
+       <label for="problemNote">Optional note</label>
+       <textarea id="problemNote" maxlength="500" placeholder="Game lagged, video froze…"></textarea>
+       <div class="dialog-actions">
+         <button value="cancel" class="secondary">Cancel</button>
+         <button id="saveProblem" value="default" class="primary">Save marker</button>
+       </div>
+     </form>
+   </dialog>
+   <div id="toast" role="status" aria-live="polite"></div>
+   <script src="/app.js"></script>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/public/styles.css b/public/styles.css
+index ad4d5060f89f53ce248ab423788e0c791a3693fe..a2a3f3352c3fa114ed29bd12a1580158372ff600 100644
+--- a/public/styles.css
++++ b/public/styles.css
+@@ -1,4 +1,11 @@
+ :root{--navy:#0d2037;--navy2:#173454;--orange:#ff6814;--orange2:#ff8a32;--cream:#fffaf5;--ink:#14253a;--muted:#6a7888;--line:#dce4eb;--blue:#2986cc;--green:#20a176;--shadow:0 12px 35px rgba(18,42,67,.08)}
+ *{box-sizing:border-box}body{margin:0;background:#f4f7f9;color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}.site-header{height:82px;padding:0 max(24px,calc((100vw - 1180px)/2));display:flex;align-items:center;justify-content:space-between;background:var(--navy);color:white}.brand{display:flex;align-items:center;gap:13px}.brand img{width:51px;height:51px;border-radius:50%}.brand strong{font-size:24px;display:block;line-height:1}.brand span{font-size:12px;color:#b8c8d9}.privacy-pill{border:1px solid #ffffff2d;border-radius:99px;padding:7px 12px;color:#d9e5ef;font-size:12px}.privacy-pill::first-letter{color:var(--green)}main{max-width:1180px;margin:32px auto 60px;padding:0 20px}.card{background:white;border:1px solid #e7edf1;border-radius:18px;box-shadow:var(--shadow)}.hero{padding:30px 34px;display:flex;align-items:center;justify-content:space-between;background:linear-gradient(120deg,#fff 55%,#fff5eb);border-left:5px solid var(--orange)}.status-line{color:var(--muted);font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.08em}.status-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#9aa8b4;margin-right:8px}.status-dot.active{background:var(--green);box-shadow:0 0 0 5px #20a17620}.hero h1{font-size:32px;margin:6px 0 2px}.hero p{color:var(--muted);margin:0}.hero-actions{display:flex;gap:10px}button{font:inherit;font-weight:750;border:0;border-radius:10px;padding:12px 18px;cursor:pointer}button.primary{color:white;background:linear-gradient(135deg,var(--orange),var(--orange2));box-shadow:0 7px 18px #ff68142c}button.secondary{color:var(--navy);background:#edf2f5}button:disabled{opacity:.45;cursor:not-allowed}.section-heading{display:flex;align-items:end;justify-content:space-between;margin:34px 2px 14px}.section-heading h2,.card h2{margin:0;font-size:20px}.section-heading>span{color:var(--muted);font-size:12px}.eyebrow{margin:0 0 4px;color:var(--orange);font-weight:800;font-size:11px;letter-spacing:.12em;text-transform:uppercase}.metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:15px}.metric{padding:20px 22px}.metric span,.summary-grid span,.speed-values span{color:var(--muted);font-size:12px;display:block}.metric strong{font-size:30px;display:block;margin:7px 0}.metric small,.speed-card small{color:#8a97a4}.content-grid{display:grid;grid-template-columns:2fr 1fr;gap:15px;margin-top:16px}.chart-card,.speed-card,.lower>.card{padding:24px}.chart-card .section-heading{margin:0 0 14px;align-items:center}.legend{display:flex;gap:20px;font-size:12px;color:var(--muted)}.legend span:before{content:"";display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}.router-key:before{background:var(--orange)}.internet-key:before{background:var(--blue)}.chart-wrap{height:245px;position:relative}.chart-wrap canvas{width:100%;height:100%}.empty{color:#98a4af;text-align:center;padding:30px}.chart-wrap .empty{position:absolute;inset:0;display:grid;place-items:center}.speed-card h2{font-size:24px;margin-bottom:24px}.speed-values{display:grid;gap:15px}.speed-values div{border-bottom:1px solid var(--line);padding-bottom:12px}.speed-values strong{font-size:20px}.lower{grid-template-columns:1.15fr .85fr}.lower h2{margin-bottom:18px}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px 12px}.summary-grid strong{font-size:18px}.sessions{max-height:250px;overflow:auto}.session-row{display:grid;grid-template-columns:1fr auto;gap:3px;padding:10px 0;border-bottom:1px solid var(--line)}.session-row strong{font-size:13px}.session-row span,.session-row small{font-size:11px;color:var(--muted)}dialog{border:0;border-radius:18px;padding:0;box-shadow:0 20px 70px #0d203755;width:min(440px,calc(100% - 30px))}dialog::backdrop{background:#0d203799;backdrop-filter:blur(3px)}dialog form{padding:28px;position:relative}dialog h2{margin:0}dialog p:not(.eyebrow){color:var(--muted)}dialog label{font-weight:700;font-size:13px}textarea{display:block;width:100%;height:90px;margin:7px 0 18px;padding:10px;border:1px solid var(--line);border-radius:9px;resize:vertical;font:inherit}.dialog-actions{display:flex;justify-content:flex-end;gap:8px}.dialog-close{position:absolute;right:12px;top:8px;background:none;font-size:24px;color:var(--muted)}#toast{position:fixed;right:24px;bottom:24px;background:var(--navy);color:white;border-radius:10px;padding:12px 18px;opacity:0;transform:translateY(12px);transition:.2s;pointer-events:none}#toast.show{opacity:1;transform:none}
+ @media(max-width:800px){.hero{align-items:flex-start;gap:20px}.hero-actions{flex-direction:column}.metrics-grid{grid-template-columns:1fr 1fr}.content-grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:1fr 1fr}.privacy-pill{display:none}}
+-@media(max-width:500px){.site-header{height:70px}.brand span{display:none}main{margin-top:18px}.hero{display:block;padding:24px}.hero-actions{margin-top:20px}.metrics-grid{grid-template-columns:1fr}.hero-actions button{width:100%}.section-heading{align-items:start}.section-heading>span{max-width:120px;text-align:right}}
+\ No newline at end of file
++@media(max-width:500px){.site-header{height:70px}.brand span{display:none}main{margin-top:18px}.hero{display:block;padding:24px}.hero-actions{margin-top:20px}.metrics-grid{grid-template-columns:1fr}.hero-actions button{width:100%}.section-heading{align-items:start}.section-heading>span{max-width:120px;text-align:right}}/* Connection-test and help states */
++.chart-wrap .empty[hidden]{display:none}
++.speed-card h2{margin-bottom:8px}
++.speed-values small{display:block;margin-top:3px}.speed-values b{color:var(--ink);font-weight:700}
++.test-phase{min-height:22px;margin:0 0 12px;color:var(--blue);font-weight:700}
++.help-card{margin-top:16px;padding:22px 24px}.help-card summary{cursor:pointer;font-weight:800;font-size:18px}
++.help-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:18px}.help-grid h3{font-size:14px}.help-grid p,.help-grid li{color:var(--muted);font-size:13px}.help-grid ul{padding-left:18px}
++@media(max-width:800px){.help-grid{grid-template-columns:1fr}}
+diff --git a/src/app.js b/src/app.js
+index 51d9d3b82d9b3e29626da6c43c2303936600720d..9ad5da67cc678a409ff56c3545fb9b130b220177 100644
+--- a/src/app.js
++++ b/src/app.js
+@@ -12,61 +12,72 @@ function createApp({ monitor, database, publicDirectory = path.join(__dirname, '
+   app.get('/api/state', (request, response, next) => {
+     try {
+       response.json(monitor.getState());
+     } catch (error) {
+       next(error);
+     }
+   });
+ 
+   app.post('/api/monitor/start', async (request, response, next) => {
+     try {
+       const result = await monitor.start();
+       response.status(result.started ? 201 : 200).json(result);
+     } catch (error) {
+       next(error);
+     }
+   });
+ 
+   app.post('/api/monitor/stop', (request, response, next) => {
+     try {
+       response.json(monitor.stop());
+     } catch (error) {
+       next(error);
+     }
+   });
+ 
++  app.post('/api/connection-test', async (request, response, next) => {
++    try {
++      if (!monitor.active) return response.status(409).json({ error: 'Start monitoring before running a connection test.' });
++      if (monitor.speedTestRunning) return response.status(409).json({ error: 'A connection test is already running.' });
++      void monitor.runConnectionTest('manual');
++      return response.status(202).json({ started: true });
++    } catch (error) {
++      return next(error);
++    }
++  });
++
+   app.post('/api/problems', (request, response, next) => {
+     try {
+       if (!monitor.active) {
+         return response.status(409).json({ error: 'Monitoring must be active to mark a problem.' });
+       }
+       const suppliedNote = request.body?.note;
+       const note = typeof suppliedNote === 'string' ? suppliedNote.trim().slice(0, 500) : '';
+       const marker = database.insertProblem(monitor.session.id, note);
+       return response.status(201).json(marker);
+     } catch (error) {
+       return next(error);
+     }
+   });
+ 
+   app.get('/api/sessions', (request, response, next) => {
+     try {
+       response.json(database.getRecentSessions(10));
+     } catch (error) {
+       next(error);
+     }
+   });
+ 
+   app.use('/api', (request, response) => {
+     response.status(404).json({ error: 'Not found' });
+   });
+ 
+   app.use((error, request, response, next) => {
+     void request;
+     void next;
+     console.error(`${new Date().toISOString()} ERROR Request failed`, error);
+     response.status(500).json({ error: 'PingTrail could not complete that request.' });
+   });
+   return app;
+ }
+ 
+-module.exports = createApp;
+\ No newline at end of file
++module.exports = createApp;
+diff --git a/src/config.js b/src/config.js
+index b21aef7991f555c54541671d816beb2fe37e76e4..c10c6909aa5231ef68e6a51badf213910d577960 100644
+--- a/src/config.js
++++ b/src/config.js
+@@ -1,27 +1,29 @@
+ 'use strict';
+ 
+ const path = require('node:path');
+ 
+ function positiveInteger(value, fallback) {
+   const parsed = Number.parseInt(value, 10);
+   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+ }
+ 
+ const externalTargets = (process.env.PINGTRAIL_EXTERNAL_TARGETS || '1.1.1.1,8.8.8.8')
+   .split(',')
+   .map((target) => target.trim())
+   .filter(Boolean);
+ 
+ module.exports = Object.freeze({
+   host: process.env.PINGTRAIL_HOST || '127.0.0.1',
+   port: positiveInteger(process.env.PORT, 3000),
+   databasePath: process.env.PINGTRAIL_DB_PATH || path.join(process.cwd(), 'data', 'pingtrail.sqlite'),
+   monitoringIntervalMs: positiveInteger(process.env.PINGTRAIL_MONITOR_INTERVAL_MS, 30_000),
+   pingCount: positiveInteger(process.env.PINGTRAIL_PING_COUNT, 5),
+   pingTimeoutMs: positiveInteger(process.env.PINGTRAIL_PING_TIMEOUT_MS, 5_000),
+   externalTargets,
+   speedTestIntervalMs: positiveInteger(process.env.PINGTRAIL_SPEED_INTERVAL_MS, 3_600_000),
+   speedTestDownloadBytes: positiveInteger(process.env.PINGTRAIL_SPEED_DOWNLOAD_BYTES, 25_000_000),
+   speedTestUploadBytes: positiveInteger(process.env.PINGTRAIL_SPEED_UPLOAD_BYTES, 10_000_000),
++  connectionTestMinimumLoadMs: positiveInteger(process.env.PINGTRAIL_CONNECTION_MIN_LOAD_MS, 8_000),
++  connectionTestBaselinePings: positiveInteger(process.env.PINGTRAIL_CONNECTION_BASELINE_PINGS, 8),
+   chartPointLimit: positiveInteger(process.env.PINGTRAIL_CHART_POINT_LIMIT, 500)
+ });
+diff --git a/src/database.js b/src/database.js
+index 758cdcb34b7aec02abb856b5e8e7b40ce8b93479..74c93d8e2ad0d858bf9b2451fbac7fa5d46a7555 100644
+--- a/src/database.js
++++ b/src/database.js
+@@ -35,133 +35,159 @@ class PingTrailDatabase {
+         min_latency REAL,
+         avg_latency REAL,
+         max_latency REAL,
+         jitter REAL NOT NULL
+       );
+       CREATE INDEX IF NOT EXISTS idx_samples_session_time ON network_samples(session_id, recorded_at);
+       CREATE INDEX IF NOT EXISTS idx_samples_check ON network_samples(check_id);
+       CREATE TABLE IF NOT EXISTS speed_tests (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+         recorded_at TEXT NOT NULL,
+         download_mbps REAL,
+         upload_mbps REAL,
+         latency REAL,
+         error TEXT
+       );
+       CREATE INDEX IF NOT EXISTS idx_speed_session_time ON speed_tests(session_id, recorded_at);
+       CREATE TABLE IF NOT EXISTS problem_markers (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+         recorded_at TEXT NOT NULL,
+         note TEXT
+       );
+       CREATE INDEX IF NOT EXISTS idx_problems_session_time ON problem_markers(session_id, recorded_at);
+     `);
++    const speedColumns = new Set(this.db.prepare('PRAGMA table_info(speed_tests)').all().map((column) => column.name));
++    const additions = {
++      trigger_type: "TEXT NOT NULL DEFAULT 'automatic' CHECK(trigger_type IN ('manual', 'automatic'))",
++      target: 'TEXT', status: "TEXT NOT NULL DEFAULT 'complete'", unloaded_latency: 'REAL',
++      unloaded_min_latency: 'REAL', unloaded_max_latency: 'REAL', unloaded_jitter: 'REAL',
++      unloaded_packet_loss: 'REAL', download_loaded_latency: 'REAL', download_loaded_jitter: 'REAL',
++      download_loaded_packet_loss: 'REAL', download_latency_increase: 'REAL',
++      upload_loaded_latency: 'REAL', upload_loaded_jitter: 'REAL', upload_loaded_packet_loss: 'REAL',
++      upload_latency_increase: 'REAL'
++    };
++    for (const [name, definition] of Object.entries(additions)) {
++      if (!speedColumns.has(name)) this.db.exec(`ALTER TABLE speed_tests ADD COLUMN ${name} ${definition}`);
++    }
+   }
+ 
+   recoverInterruptedSessions() {
+     const now = new Date().toISOString();
+     this.db.prepare("UPDATE sessions SET status = 'interrupted', ended_at = ? WHERE status = 'active'").run(now);
+   }
+ 
+   createSession() {
+     const startedAt = new Date().toISOString();
+     const result = this.db.prepare("INSERT INTO sessions (started_at, status) VALUES (?, 'active')").run(startedAt);
+     return { id: Number(result.lastInsertRowid), startedAt, endedAt: null, status: 'active' };
+   }
+ 
+   stopSession(id, status = 'stopped') {
+     const endedAt = new Date().toISOString();
+     const statement = this.db.prepare("UPDATE sessions SET ended_at = ?, status = ? WHERE id = ? AND status = 'active'");
+     statement.run(endedAt, status, id);
+     return endedAt;
+   }
+ 
+   insertSamples(samples) {
+     const insert = this.db.prepare(`INSERT INTO network_samples
+       (session_id, check_id, recorded_at, target, target_type, packets_sent, packets_received,
+        packet_loss, min_latency, avg_latency, max_latency, jitter)
+       VALUES (@sessionId, @checkId, @recordedAt, @target, @targetType, @packetsSent,
+        @packetsReceived, @packetLoss, @minLatency, @avgLatency, @maxLatency, @jitter)`);
+     const insertMany = this.db.transaction((rows) => {
+       for (const row of rows) insert.run(row);
+     });
+     insertMany(samples);
+   }
+ 
+   insertSpeedTest(result) {
+     const query = `INSERT INTO speed_tests
+-      (session_id, recorded_at, download_mbps, upload_mbps, latency, error)
+-      VALUES (@sessionId, @recordedAt, @downloadMbps, @uploadMbps, @latency, @error)`;
++      (session_id, recorded_at, trigger_type, target, status, unloaded_latency, unloaded_min_latency,
++       unloaded_max_latency, unloaded_jitter, unloaded_packet_loss, download_mbps,
++       download_loaded_latency, download_loaded_jitter, download_loaded_packet_loss,
++       download_latency_increase, upload_mbps, upload_loaded_latency, upload_loaded_jitter,
++       upload_loaded_packet_loss, upload_latency_increase, latency, error)
++      VALUES (@sessionId, @recordedAt, @triggerType, @target, @status, @unloadedLatency,
++       @unloadedMinLatency, @unloadedMaxLatency, @unloadedJitter, @unloadedPacketLoss,
++       @downloadMbps, @downloadLoadedLatency, @downloadLoadedJitter, @downloadLoadedPacketLoss,
++       @downloadLatencyIncrease, @uploadMbps, @uploadLoadedLatency, @uploadLoadedJitter,
++       @uploadLoadedPacketLoss, @uploadLatencyIncrease, @unloadedLatency, @error)`;
+     this.db.prepare(query).run(result);
+   }
+ 
+   insertProblem(sessionId, note) {
+     const recordedAt = new Date().toISOString();
+     const statement = this.db.prepare('INSERT INTO problem_markers (session_id, recorded_at, note) VALUES (?, ?, ?)');
+     const result = statement.run(sessionId, recordedAt, note || null);
+     return { id: Number(result.lastInsertRowid), sessionId, recordedAt, note: note || null };
+   }
+ 
+   getSession(id) {
+     const query = 'SELECT id, started_at AS startedAt, ended_at AS endedAt, status FROM sessions WHERE id = ?';
+     return this.db.prepare(query).get(id) || null;
+   }
+ 
+   getLatestCheck(sessionId) {
+     const query = `SELECT recorded_at AS recordedAt, target, target_type AS targetType,
+       packets_sent AS packetsSent, packets_received AS packetsReceived, packet_loss AS packetLoss,
+       min_latency AS minLatency, avg_latency AS avgLatency, max_latency AS maxLatency, jitter
+       FROM network_samples WHERE check_id = (
+         SELECT check_id FROM network_samples WHERE session_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1
+       ) ORDER BY target_type DESC, target`;
+     return this.db.prepare(query).all(sessionId);
+   }
+ 
+   getSessionSummary(sessionId) {
+     const query = `SELECT COUNT(*) AS sampleCount,
+       AVG(CASE WHEN target_type = 'router' THEN avg_latency END) AS averageRouterLatency,
+       AVG(CASE WHEN target_type = 'external' THEN avg_latency END) AS averageInternetLatency,
+       MAX(max_latency) AS maximumLatency,
+       AVG(jitter) AS averageJitter,
+       SUM(CASE WHEN packet_loss > 0 THEN 1 ELSE 0 END) AS packetLossEvents,
+       MAX(packet_loss) AS worstPacketLoss
+       FROM network_samples WHERE session_id = ?`;
+     return this.db.prepare(query).get(sessionId);
+   }
+ 
+   getChartData(sessionId, limit) {
+     const query = `SELECT recorded_at AS recordedAt, target_type AS targetType, target,
+       avg_latency AS avgLatency, packet_loss AS packetLoss
+       FROM network_samples WHERE session_id = ?
+       ORDER BY recorded_at DESC, id DESC LIMIT ?`;
+     return this.db.prepare(query).all(sessionId, limit).reverse();
+   }
+ 
+   getLatestSpeedTest(sessionId) {
+-    const query = `SELECT recorded_at AS recordedAt, download_mbps AS downloadMbps,
+-      upload_mbps AS uploadMbps, latency, error FROM speed_tests
++    const query = `SELECT recorded_at AS recordedAt, trigger_type AS triggerType, target, status,
++      unloaded_latency AS unloadedLatency, unloaded_min_latency AS unloadedMinLatency,
++      unloaded_max_latency AS unloadedMaxLatency, unloaded_jitter AS unloadedJitter,
++      unloaded_packet_loss AS unloadedPacketLoss, download_mbps AS downloadMbps,
++      download_loaded_latency AS downloadLoadedLatency, download_latency_increase AS downloadLatencyIncrease,
++      upload_mbps AS uploadMbps, upload_loaded_latency AS uploadLoadedLatency,
++      upload_latency_increase AS uploadLatencyIncrease, error FROM speed_tests
+       WHERE session_id = ? ORDER BY recorded_at DESC LIMIT 1`;
+     return this.db.prepare(query).get(sessionId) || null;
+   }
+ 
+   getProblems(sessionId) {
+     const query = `SELECT id, recorded_at AS recordedAt, note FROM problem_markers
+       WHERE session_id = ? ORDER BY recorded_at`;
+     return this.db.prepare(query).all(sessionId);
+   }
+ 
+   getRecentSessions(limit = 10) {
+     const query = `SELECT s.id, s.started_at AS startedAt, s.ended_at AS endedAt,
+       s.status, COUNT(n.id) AS sampleCount
+       FROM sessions s LEFT JOIN network_samples n ON n.session_id = s.id
+       GROUP BY s.id ORDER BY s.id DESC LIMIT ?`;
+     return this.db.prepare(query).all(limit);
+   }
+ 
+   close() {
+     this.db.close();
+   }
+ }
+ 
+ module.exports = PingTrailDatabase;
+diff --git a/src/monitor.js b/src/monitor.js
+index d99f8be64d2a5978739181b1c15008e1a74d8fd0..6fb6d5d5524905ba7ecb8183770b7614ac0344f0 100644
+--- a/src/monitor.js
++++ b/src/monitor.js
+@@ -1,57 +1,58 @@
+ 'use strict';
+ 
+ const crypto = require('node:crypto');
+ const logger = require('./logger');
+ const network = require('./network');
+ const speedTest = require('./speed-test');
+ 
+ class MonitorService {
+   constructor({ database, config, networkService = network, speedTestService = speedTest, log = logger }) {
+     this.database = database;
+     this.config = config;
+     this.network = networkService;
+     this.speedTestService = speedTestService;
+     this.log = log;
+     this.session = null;
+     this.monitorTimer = null;
+     this.speedTimer = null;
+     this.monitorJobRunning = false;
+     this.speedTestRunning = false;
++    this.connectionTestPhase = null;
+     this.gateway = null;
+   }
+ 
+   get active() {
+     return Boolean(this.session);
+   }
+ 
+   async start() {
+     if (this.active) return { started: false, session: this.session };
+     this.session = this.database.createSession();
+     this.log.info('Monitoring started', { sessionId: this.session.id });
+     this.scheduleMonitor(0);
+-    this.scheduleSpeedTest(Math.min(5_000, this.config.speedTestIntervalMs));
++    this.scheduleSpeedTest(this.config.speedTestIntervalMs);
+     return { started: true, session: this.session };
+   }
+ 
+   stop() {
+     if (!this.active) return { stopped: false, session: null };
+     clearTimeout(this.monitorTimer);
+     clearTimeout(this.speedTimer);
+     const endedAt = this.database.stopSession(this.session.id);
+     const session = { ...this.session, endedAt, status: 'stopped' };
+     this.log.info('Monitoring stopped', { sessionId: session.id });
+     this.session = null;
+     return { stopped: true, session };
+   }
+ 
+   scheduleMonitor(delay) {
+     clearTimeout(this.monitorTimer);
+     if (!this.active) return;
+     this.monitorTimer = setTimeout(async () => {
+       await this.runMonitoringJob();
+       this.scheduleMonitor(this.config.monitoringIntervalMs);
+     }, delay);
+     this.monitorTimer.unref?.();
+   }
+ 
+   async runMonitoringJob() {
+@@ -94,88 +95,101 @@ class MonitorService {
+             minLatency: null,
+             avgLatency: null,
+             maxLatency: null,
+             jitter: 0
+           };
+         }
+       }));
+ 
+       if (results.length && this.session?.id === sessionId) {
+         this.database.insertSamples(results);
+         this.log.info('Network check stored', { sessionId, samples: results.length });
+       }
+       return true;
+     } catch (error) {
+       this.log.error('Monitoring job failed safely', error);
+       return false;
+     } finally {
+       this.monitorJobRunning = false;
+     }
+   }
+ 
+   scheduleSpeedTest(delay) {
+     clearTimeout(this.speedTimer);
+     if (!this.active) return;
+     this.speedTimer = setTimeout(async () => {
+-      await this.runSpeedTestJob();
++      await this.runConnectionTest('automatic');
+       this.scheduleSpeedTest(this.config.speedTestIntervalMs);
+     }, delay);
+     this.speedTimer.unref?.();
+   }
+ 
+-  async runSpeedTestJob() {
++  async runConnectionTest(triggerType = 'manual') {
+     if (!this.active || this.speedTestRunning) return false;
+     this.speedTestRunning = true;
+     const sessionId = this.session.id;
+     const recordedAt = new Date().toISOString();
+     try {
+-      const result = await this.speedTestService.runSpeedTest({
++      const runner = this.speedTestService.runConnectionTest || this.speedTestService.runSpeedTest;
++      const result = await runner({
+         downloadBytes: this.config.speedTestDownloadBytes,
+-        uploadBytes: this.config.speedTestUploadBytes
++        uploadBytes: this.config.speedTestUploadBytes,
++        minimumLoadDurationMs: this.config.connectionTestMinimumLoadMs,
++        baselinePingCount: this.config.connectionTestBaselinePings,
++        pingTimeoutMs: this.config.pingTimeoutMs,
++        target: this.config.externalTargets[0],
++        onPhase: (phase) => { this.connectionTestPhase = phase; }
+       });
+       if (this.session?.id === sessionId) {
+-        this.database.insertSpeedTest({ sessionId, recordedAt, ...result, error: null });
+-        this.log.info('Speed test stored', { sessionId });
++        this.database.insertSpeedTest({ sessionId, recordedAt, triggerType, ...result });
++        this.log.info('Connection test stored', { sessionId, triggerType });
+       }
+       return true;
+     } catch (error) {
+-      this.log.warn('Speed test failed safely', { message: error.message });
++      this.log.warn('Connection test failed safely', { message: error.message });
+       if (this.session?.id === sessionId) {
+         this.database.insertSpeedTest({
+-          sessionId,
+-          recordedAt,
+-          downloadMbps: null,
+-          uploadMbps: null,
+-          latency: null,
++          sessionId, recordedAt, triggerType, target: this.config.externalTargets[0], status: 'failed',
++          unloadedLatency: null, unloadedMinLatency: null, unloadedMaxLatency: null,
++          unloadedJitter: null, unloadedPacketLoss: null, downloadMbps: null,
++          downloadLoadedLatency: null, downloadLoadedJitter: null, downloadLoadedPacketLoss: null,
++          downloadLatencyIncrease: null, uploadMbps: null, uploadLoadedLatency: null,
++          uploadLoadedJitter: null, uploadLoadedPacketLoss: null, uploadLatencyIncrease: null,
+           error: error.message.slice(0, 500)
+         });
+       }
+       return false;
+     } finally {
+       this.speedTestRunning = false;
++      this.connectionTestPhase = null;
+     }
+   }
+ 
++  runSpeedTestJob() {
++    return this.runConnectionTest('automatic');
++  }
++
+   getState() {
+     const state = {
+       active: this.active,
+       gateway: this.gateway,
+       jobRunning: this.monitorJobRunning,
+       speedTestRunning: this.speedTestRunning,
++      connectionTestPhase: this.connectionTestPhase,
+       session: null
+     };
+     if (!this.session) return state;
+     state.session = this.database.getSession(this.session.id);
+     state.latestCheck = this.database.getLatestCheck(this.session.id);
+     state.summary = this.database.getSessionSummary(this.session.id);
+     state.chart = this.database.getChartData(this.session.id, this.config.chartPointLimit);
+     state.latestSpeedTest = this.database.getLatestSpeedTest(this.session.id);
+     state.problems = this.database.getProblems(this.session.id);
+     return state;
+   }
+ 
+   shutdown() {
+     if (this.active) this.stop();
+   }
+ }
+ 
+ module.exports = MonitorService;
+diff --git a/src/speed-test.js b/src/speed-test.js
+index 6125e8e67401ab965584d4ee6dc72e89ae45ff7a..822e0024c03297aaac4cd84e7296ca759f7013bd 100644
+--- a/src/speed-test.js
++++ b/src/speed-test.js
+@@ -1,43 +1,127 @@
+ 'use strict';
+ 
+ const { performance } = require('node:perf_hooks');
++const network = require('./network');
+ 
+-async function timedRequest(url, options = {}, fetchImpl = fetch) {
++function summarizeLatency(measurements) {
++  const times = measurements.flatMap((measurement) => measurement.times || []);
++  const packetsSent = measurements.reduce((sum, item) => sum + item.packetsSent, 0);
++  const packetsReceived = times.length;
++  return {
++    packetsSent,
++    packetsReceived,
++    packetLoss: packetsSent ? ((packetsSent - packetsReceived) / packetsSent) * 100 : null,
++    minLatency: times.length ? Math.min(...times) : null,
++    avgLatency: times.length ? times.reduce((sum, value) => sum + value, 0) / times.length : null,
++    maxLatency: times.length ? Math.max(...times) : null,
++    jitter: network.calculateJitter(times),
++    times
++  };
++}
++
++function latencyIncrease(loaded, baseline) {
++  return loaded == null || baseline == null ? null : loaded - baseline;
++}
++
++async function transfer(url, options, fetchImpl) {
+   const started = performance.now();
+-  const response = await fetchImpl(url, {
+-    ...options,
+-    signal: AbortSignal.timeout(120_000)
+-  });
+-  if (!response.ok) throw new Error(`Speed-test server returned HTTP ${response.status}`);
++  const response = await fetchImpl(url, { ...options, signal: AbortSignal.timeout(120_000) });
++  if (!response.ok) throw new Error(`Connection-test server returned HTTP ${response.status}`);
+   await response.arrayBuffer();
+   return (performance.now() - started) / 1_000;
+ }
+ 
+-async function runSpeedTest(options = {}) {
+-  const fetchImpl = options.fetchImpl || fetch;
+-  const downloadBytes = options.downloadBytes || 25_000_000;
+-  const uploadBytes = options.uploadBytes || 10_000_000;
+-  const latencyRuns = options.latencyRuns || 5;
+-  const latencies = [];
+-
+-  for (let index = 0; index < latencyRuns; index += 1) {
+-    const seconds = await timedRequest('https://speed.cloudflare.com/__down?bytes=0', {}, fetchImpl);
+-    latencies.push(seconds * 1_000);
++async function measureLatency(target, count, pingOptions, pingImpl) {
++  return pingImpl(target, { count, ...pingOptions });
++}
++
++async function runLoadedPhase({ direction, target, bytes, minimumDurationMs, fetchImpl, pingImpl, pingOptions }) {
++  let loading = true;
++  const measurements = [];
++  let transferred = 0;
++  let transferSeconds = 0;
++
++  const latencyTask = (async () => {
++    while (loading || measurements.length === 0) {
++      measurements.push(await measureLatency(target, 1, pingOptions, pingImpl));
++    }
++  })();
++
++  let transferError = null;
++  try {
++    const phaseStarted = performance.now();
++    do {
++      const isDownload = direction === 'download';
++      const seconds = await transfer(
++        isDownload ? `https://speed.cloudflare.com/__down?bytes=${bytes}` : 'https://speed.cloudflare.com/__up',
++        isDownload ? {} : {
++          method: 'POST',
++          headers: { 'content-type': 'application/octet-stream' },
++          body: Buffer.alloc(bytes)
++        },
++        fetchImpl
++      );
++      transferred += bytes;
++      transferSeconds += seconds;
++    } while (performance.now() - phaseStarted < minimumDurationMs);
++  } catch (error) {
++    transferError = error;
++  } finally {
++    loading = false;
++    await latencyTask;
+   }
+ 
+-  const downloadUrl = `https://speed.cloudflare.com/__down?bytes=${downloadBytes}`;
+-  const downloadSeconds = await timedRequest(downloadUrl, {}, fetchImpl);
+-  const uploadSeconds = await timedRequest('https://speed.cloudflare.com/__up', {
+-    method: 'POST',
+-    headers: { 'content-type': 'application/octet-stream' },
+-    body: Buffer.alloc(uploadBytes)
+-  }, fetchImpl);
++  const latency = summarizeLatency(measurements);
++  return {
++    mbps: transferError || !transferSeconds ? null : (transferred * 8) / transferSeconds / 1_000_000,
++    latency,
++    error: transferError?.message || null
++  };
++}
++
++async function runConnectionTest(options = {}) {
++  const fetchImpl = options.fetchImpl || fetch;
++  const pingImpl = options.pingImpl || network.pingTarget;
++  const target = options.target || '1.1.1.1';
++  const pingOptions = { timeoutMs: options.pingTimeoutMs || 2_000 };
++  const onPhase = options.onPhase || (() => {});
++
++  onPhase('baseline');
++  const baseline = await measureLatency(target, options.baselinePingCount || 8, pingOptions, pingImpl);
++
++  onPhase('download');
++  const download = await runLoadedPhase({
++    direction: 'download', target, bytes: options.downloadBytes || 25_000_000,
++    minimumDurationMs: options.minimumLoadDurationMs || 8_000, fetchImpl, pingImpl, pingOptions
++  });
++
++  onPhase('upload');
++  const upload = await runLoadedPhase({
++    direction: 'upload', target, bytes: options.uploadBytes || 10_000_000,
++    minimumDurationMs: options.minimumLoadDurationMs || 8_000, fetchImpl, pingImpl, pingOptions
++  });
+ 
++  const errors = [download.error && `Download: ${download.error}`, upload.error && `Upload: ${upload.error}`].filter(Boolean);
+   return {
+-    downloadMbps: (downloadBytes * 8) / downloadSeconds / 1_000_000,
+-    uploadMbps: (uploadBytes * 8) / uploadSeconds / 1_000_000,
+-    latency: latencies.reduce((sum, value) => sum + value, 0) / latencies.length
++    target,
++    unloadedLatency: baseline.avgLatency,
++    unloadedMinLatency: baseline.minLatency,
++    unloadedMaxLatency: baseline.maxLatency,
++    unloadedJitter: baseline.jitter,
++    unloadedPacketLoss: baseline.packetLoss,
++    downloadMbps: download.mbps,
++    downloadLoadedLatency: download.latency.avgLatency,
++    downloadLoadedJitter: download.latency.jitter,
++    downloadLoadedPacketLoss: download.latency.packetLoss,
++    downloadLatencyIncrease: latencyIncrease(download.latency.avgLatency, baseline.avgLatency),
++    uploadMbps: upload.mbps,
++    uploadLoadedLatency: upload.latency.avgLatency,
++    uploadLoadedJitter: upload.latency.jitter,
++    uploadLoadedPacketLoss: upload.latency.packetLoss,
++    uploadLatencyIncrease: latencyIncrease(upload.latency.avgLatency, baseline.avgLatency),
++    status: errors.length ? 'partial' : 'complete',
++    error: errors.join('; ') || null
+   };
+ }
+ 
+-module.exports = { runSpeedTest, timedRequest };
++module.exports = { latencyIncrease, runConnectionTest, runLoadedPhase, summarizeLatency, transfer };
+diff --git a/test/database.test.js b/test/database.test.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..44a14a424b770ad319a518c42320bcf17314c294
+--- /dev/null
++++ b/test/database.test.js
+@@ -0,0 +1,27 @@
++'use strict';
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const os = require('node:os');
++const path = require('node:path');
++const fs = require('node:fs');
++const sqliteAvailable = fs.existsSync(path.join(__dirname, '..', 'node_modules', 'better-sqlite3', 'package.json'));
++
++test('persists comprehensive manual connection-test fields', { skip: !sqliteAvailable && 'better-sqlite3 is not installed' }, () => {
++  const PingTrailDatabase = require('../src/database');
++  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pingtrail-'));
++  const database = new PingTrailDatabase(path.join(directory, 'test.sqlite'));
++  const session = database.createSession();
++  database.insertSpeedTest({ sessionId: session.id, recordedAt: new Date().toISOString(),
++    triggerType: 'manual', target: '1.1.1.1', status: 'complete', unloadedLatency: 20,
++    unloadedMinLatency: 18, unloadedMaxLatency: 22, unloadedJitter: 2, unloadedPacketLoss: 0,
++    downloadMbps: 195, downloadLoadedLatency: 52, downloadLoadedJitter: 4,
++    downloadLoadedPacketLoss: 0, downloadLatencyIncrease: 32, uploadMbps: 145,
++    uploadLoadedLatency: 81, uploadLoadedJitter: 5, uploadLoadedPacketLoss: 0,
++    uploadLatencyIncrease: 61, error: null });
++  const stored = database.getLatestSpeedTest(session.id);
++  assert.equal(stored.triggerType, 'manual');
++  assert.equal(stored.downloadLatencyIncrease, 32);
++  assert.equal(stored.uploadLoadedLatency, 81);
++  database.close(); fs.rmSync(directory, { recursive: true, force: true });
++});
+diff --git a/test/monitor.test.js b/test/monitor.test.js
+index 4d88d8e91f91c09560bddca0840ad333f5a43bc8..fa9b4c5df65d77cb835a0a90d92e82765f8dbf56 100644
+--- a/test/monitor.test.js
++++ b/test/monitor.test.js
+@@ -3,70 +3,94 @@
+ const test = require('node:test');
+ const assert = require('node:assert/strict');
+ const MonitorService = require('../src/monitor');
+ 
+ function fixture() {
+   const stored = { samples: [], speeds: [], sessions: [] };
+   const database = {
+     createSession() { const session = { id: stored.sessions.length + 1, startedAt: new Date().toISOString(), status: 'active' }; stored.sessions.push(session); return session; },
+     stopSession() { return new Date().toISOString(); },
+     insertSamples(rows) { stored.samples.push(...rows); },
+     insertSpeedTest(row) { stored.speeds.push(row); },
+     getSession(id) { return stored.sessions.find((session) => session.id === id); },
+     getLatestCheck() { return stored.samples; },
+     getSessionSummary() { return { sampleCount: stored.samples.length }; },
+     getChartData() { return stored.samples; },
+     getLatestSpeedTest() { return stored.speeds.at(-1) || null; },
+     getProblems() { return []; }
+   };
+   const successful = { packetsSent: 5, packetsReceived: 5, packetLoss: 0, minLatency: 1, avgLatency: 2, maxLatency: 3, jitter: 1 };
+   const networkService = {
+     detectDefaultGateway: async () => '192.168.1.1',
+     pingTarget: async (target) => target === '8.8.8.8' ? { ...successful, packetsReceived: 0, packetLoss: 100, avgLatency: null } : successful
+   };
+   const config = { monitoringIntervalMs: 30_000, pingCount: 5, pingTimeoutMs: 5000, externalTargets: ['1.1.1.1', '8.8.8.8'], speedTestIntervalMs: 3_600_000, speedTestDownloadBytes: 1, speedTestUploadBytes: 1, chartPointLimit: 500 };
+   const quietLog = { info() {}, warn() {}, error() {} };
+-  return { monitor: new MonitorService({ database, config, networkService, speedTestService: { runSpeedTest: async () => ({ downloadMbps: 100, uploadMbps: 20, latency: 10 }) }, log: quietLog }), stored };
++  const connectionResult = { target: '1.1.1.1', status: 'complete', unloadedLatency: 10,
++    unloadedMinLatency: 9, unloadedMaxLatency: 11, unloadedJitter: 1, unloadedPacketLoss: 0,
++    downloadMbps: 100, downloadLoadedLatency: 30, downloadLoadedJitter: 2,
++    downloadLoadedPacketLoss: 0, downloadLatencyIncrease: 20, uploadMbps: 20,
++    uploadLoadedLatency: 40, uploadLoadedJitter: 3, uploadLoadedPacketLoss: 0,
++    uploadLatencyIncrease: 30, error: null };
++  return { monitor: new MonitorService({ database, config, networkService, speedTestService: { runConnectionTest: async () => connectionResult }, log: quietLog }), stored };
+ }
+ 
+ test('creates a session and stores router and external measurements', async () => {
+   const { monitor, stored } = fixture();
+   const first = await monitor.start();
+   clearTimeout(monitor.monitorTimer);
+   clearTimeout(monitor.speedTimer);
+   assert.equal(first.started, true);
+   const duplicate = await monitor.start();
+   assert.equal(duplicate.started, false);
+   await monitor.runMonitoringJob();
+   assert.equal(stored.samples.length, 3);
+   const targetTypes = stored.samples.map((row) => row.targetType);
+   assert.deepEqual(targetTypes, ['router', 'external', 'external']);
+   assert.equal(stored.samples.find((row) => row.target === '8.8.8.8').packetLoss, 100);
+   assert.equal(monitor.stop().stopped, true);
+   assert.equal(monitor.active, false);
+ });
+ 
+ test('prevents overlapping monitoring and speed-test jobs', async () => {
+   const { monitor, stored } = fixture();
+   await monitor.start();
+   clearTimeout(monitor.monitorTimer);
+   clearTimeout(monitor.speedTimer);
+   monitor.monitorJobRunning = true;
+   assert.equal(await monitor.runMonitoringJob(), false);
+   monitor.monitorJobRunning = false;
+   monitor.speedTestRunning = true;
+   assert.equal(await monitor.runSpeedTestJob(), false);
+   monitor.speedTestRunning = false;
+   assert.equal(await monitor.runSpeedTestJob(), true);
+   assert.equal(stored.speeds.length, 1);
++  assert.equal(stored.speeds[0].triggerType, 'automatic');
+   monitor.stop();
+ });
+ 
+ test('stores speed-test failures instead of throwing', async () => {
+   const { monitor, stored } = fixture();
+-  monitor.speedTestService.runSpeedTest = async () => { throw new Error('offline'); };
++  monitor.speedTestService.runConnectionTest = async () => { throw new Error('offline'); };
+   await monitor.start();
+   clearTimeout(monitor.monitorTimer); clearTimeout(monitor.speedTimer);
+   assert.equal(await monitor.runSpeedTestJob(), false);
+   assert.equal(stored.speeds[0].error, 'offline');
+   monitor.stop();
+ });
++
++test('manual connection tests expose phase state and cannot overlap', async () => {
++  const { monitor, stored } = fixture();
++  await monitor.start(); clearTimeout(monitor.monitorTimer); clearTimeout(monitor.speedTimer);
++  let release;
++  monitor.speedTestService.runConnectionTest = ({ onPhase }) => new Promise((resolve) => {
++    onPhase('download'); release = () => resolve({ target: '1.1.1.1', status: 'complete', error: null });
++  });
++  const running = monitor.runConnectionTest('manual');
++  await new Promise((resolve) => setImmediate(resolve));
++  assert.equal(monitor.getState().connectionTestPhase, 'download');
++  assert.equal(await monitor.runConnectionTest('automatic'), false);
++  release();
++  assert.equal(await running, true);
++  assert.equal(stored.speeds[0].triggerType, 'manual');
++  monitor.stop();
++});
+diff --git a/test/speed-test.test.js b/test/speed-test.test.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff85f0c69cec43e99e2ff574f273ff358a31bd7b
+--- /dev/null
++++ b/test/speed-test.test.js
+@@ -0,0 +1,36 @@
++'use strict';
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { latencyIncrease, runConnectionTest, summarizeLatency } = require('../src/speed-test');
++
++test('summarizes loaded latency, loss, and jitter from concurrent samples', () => {
++  const result = summarizeLatency([
++    { packetsSent: 1, times: [10] }, { packetsSent: 1, times: [14] }, { packetsSent: 1, times: [] }
++  ]);
++  assert.equal(result.avgLatency, 12);
++  assert.equal(result.jitter, 4);
++  assert.ok(Math.abs(result.packetLoss - (100 / 3)) < 1e-10);
++});
++
++test('latency increase requires both defensible measurements', () => {
++  assert.equal(latencyIncrease(52, 20), 32);
++  assert.equal(latencyIncrease(null, 20), null);
++});
++
++test('connection test pings while each transfer phase is active', async () => {
++  const phases = [];
++  let pingValue = 10;
++  const pingImpl = async (target, { count }) => ({
++    packetsSent: count, packetsReceived: count, packetLoss: 0, minLatency: pingValue,
++    avgLatency: pingValue, maxLatency: pingValue, jitter: 0, times: Array(count).fill(pingValue++)
++  });
++  const fetchImpl = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(1) });
++  const result = await runConnectionTest({ pingImpl, fetchImpl, baselinePingCount: 3,
++    minimumLoadDurationMs: -1, downloadBytes: 100, uploadBytes: 100,
++    onPhase: (phase) => phases.push(phase) });
++  assert.deepEqual(phases, ['baseline', 'download', 'upload']);
++  assert.equal(result.status, 'complete');
++  assert.ok(result.downloadLoadedLatency > result.unloadedLatency);
++  assert.ok(result.uploadLatencyIncrease > result.downloadLatencyIncrease);
++});

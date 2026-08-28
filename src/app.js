@@ -34,6 +34,18 @@ function createApp({ monitor, database, publicDirectory = path.join(__dirname, '
     }
   });
 
+  app.post('/api/connection-test', async (request, response, next) => {
+    try {
+      if (!monitor.active) return response.status(409).json({ error: 'Start monitoring before running a connection test.' });
+      if (monitor.speedTestRunning) return response.status(409).json({ error: 'A connection test is already running.' });
+      void monitor.runConnectionTest('manual');
+      return response.status(202).json({ started: true });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+
   app.post('/api/problems', (request, response, next) => {
     try {
       if (!monitor.active) {

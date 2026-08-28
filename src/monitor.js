@@ -17,6 +17,7 @@ class MonitorService {
     this.speedTimer = null;
     this.monitorJobRunning = false;
     this.speedTestRunning = false;
+    this.connectionTestPhase = null;
     this.gateway = null;
   }
 
@@ -29,7 +30,7 @@ class MonitorService {
     this.session = this.database.createSession();
     this.log.info('Monitoring started', { sessionId: this.session.id });
     this.scheduleMonitor(0);
-    this.scheduleSpeedTest(Math.min(5_000, this.config.speedTestIntervalMs));
+    this.scheduleSpeedTest(this.config.speedTestIntervalMs);
     return { started: true, session: this.session };
   }
 
@@ -116,43 +117,55 @@ class MonitorService {
     clearTimeout(this.speedTimer);
     if (!this.active) return;
     this.speedTimer = setTimeout(async () => {
-      await this.runSpeedTestJob();
+      await this.runConnectionTest('automatic');
       this.scheduleSpeedTest(this.config.speedTestIntervalMs);
     }, delay);
     this.speedTimer.unref?.();
   }
 
-  async runSpeedTestJob() {
+  async runConnectionTest(triggerType = 'manual') {
     if (!this.active || this.speedTestRunning) return false;
     this.speedTestRunning = true;
     const sessionId = this.session.id;
     const recordedAt = new Date().toISOString();
     try {
-      const result = await this.speedTestService.runSpeedTest({
+      const runner = this.speedTestService.runConnectionTest || this.speedTestService.runSpeedTest;
+      const result = await runner({
         downloadBytes: this.config.speedTestDownloadBytes,
-        uploadBytes: this.config.speedTestUploadBytes
+        uploadBytes: this.config.speedTestUploadBytes,
+        minimumLoadDurationMs: this.config.connectionTestMinimumLoadMs,
+        baselinePingCount: this.config.connectionTestBaselinePings,
+        pingTimeoutMs: this.config.pingTimeoutMs,
+        target: this.config.externalTargets[0],
+        onPhase: (phase) => { this.connectionTestPhase = phase; }
       });
       if (this.session?.id === sessionId) {
-        this.database.insertSpeedTest({ sessionId, recordedAt, ...result, error: null });
-        this.log.info('Speed test stored', { sessionId });
+        this.database.insertSpeedTest({ sessionId, recordedAt, triggerType, ...result });
+        this.log.info('Connection test stored', { sessionId, triggerType });
       }
       return true;
     } catch (error) {
-      this.log.warn('Speed test failed safely', { message: error.message });
+      this.log.warn('Connection test failed safely', { message: error.message });
       if (this.session?.id === sessionId) {
         this.database.insertSpeedTest({
-          sessionId,
-          recordedAt,
-          downloadMbps: null,
-          uploadMbps: null,
-          latency: null,
+          sessionId, recordedAt, triggerType, target: this.config.externalTargets[0], status: 'failed',
+          unloadedLatency: null, unloadedMinLatency: null, unloadedMaxLatency: null,
+          unloadedJitter: null, unloadedPacketLoss: null, downloadMbps: null,
+          downloadLoadedLatency: null, downloadLoadedJitter: null, downloadLoadedPacketLoss: null,
+          downloadLatencyIncrease: null, uploadMbps: null, uploadLoadedLatency: null,
+          uploadLoadedJitter: null, uploadLoadedPacketLoss: null, uploadLatencyIncrease: null,
           error: error.message.slice(0, 500)
         });
       }
       return false;
     } finally {
       this.speedTestRunning = false;
+      this.connectionTestPhase = null;
     }
+  }
+
+  runSpeedTestJob() {
+    return this.runConnectionTest('automatic');
   }
 
   getState() {
@@ -161,6 +174,7 @@ class MonitorService {
       gateway: this.gateway,
       jobRunning: this.monitorJobRunning,
       speedTestRunning: this.speedTestRunning,
+      connectionTestPhase: this.connectionTestPhase,
       session: null
     };
     if (!this.session) return state;

@@ -1,14 +1,12 @@
 # PingTrail
 
-![PingTrail logo](edited-photo.png)
+<img src="public/assets/pingtrail-logo.png" alt="PingTrail logo" width="240">
 
 **Track your internet connection. Find the problem.**
 
 PingTrail is a small, open-source, local-first network monitor for diagnosing intermittent home network and internet problems. It samples your router and two independent internet targets, keeps the results in SQLite on your computer, and presents the current session in a friendly browser dashboard.
 
-> **MVP status:** PingTrail is ready for local testing. Windows is the primary target; the measurement parser and default-route detection also support common Linux and macOS installations.
-
-## What the MVP includes
+## What PingTrail includes
 
 - Backend monitoring that continues when the browser is closed
 - A fresh retained session each time monitoring starts
@@ -17,7 +15,7 @@ PingTrail is a small, open-source, local-first network monitor for diagnosing in
 - SQLite persistence of success, packet loss, and unreachable targets
 - Start/stop control, latest check, live duration, summaries, recent sessions, and a latency chart
 - Optional timestamped “Mark Problem” notes, shown as red dashed lines on the chart
-- A guarded speed test near session start and approximately hourly thereafter
+- A manual or hourly comprehensive connection test for throughput and latency under load
 - Local-only HTTP binding and no accounts, telemetry, or cloud database
 
 ## Windows quick start
@@ -65,6 +63,18 @@ Every monitoring check shares one timestamp and contains one sample per target. 
 | Minimum / average / maximum latency | Round-trip time (RTT) of successful replies in milliseconds |
 | Jitter | Mean absolute difference between consecutive successful RTTs |
 
+**Latency** is the round-trip travel time for a small request and reply. **Router latency** covers
+the local path to the default gateway, while **internet latency** covers external targets. Comparing
+them can help distinguish a possible Wi-Fi/LAN/router change from one farther upstream. **Packet
+loss** is the percentage of requests that receive no reply, and **jitter** describes inconsistent
+latency that may be noticeable in games, voice, or video calls.
+
+The comprehensive test also records **unloaded latency** while the connection is relatively idle,
+then **loaded latency** while download and upload transfers are actually active. Download/upload
+latency increase is loaded latency minus the unloaded baseline. **Download and upload throughput**
+describe how many megabits are transferred per second in each direction.
+
+
 For example, successful RTTs of 10, 14, 11, and 17 ms have jitter `(4 + 3 + 6) / 3 = 4.33 ms`. This simple variation measure is understandable, useful for short ping groups, and does not disguise sudden changes. A group with fewer than two successful replies records jitter as 0 because variation cannot be estimated. A fully unreachable target records 100% loss and null latency values rather than crashing the app.
 
 ### Interpreting the trail
@@ -76,11 +86,28 @@ For example, successful RTTs of 10, 14, 11, and 17 ms have jitter `(4 + 3 + 6) /
 
 These are diagnostic clues, not definitive fault attribution. Some routers and networks deprioritize or block ICMP ping traffic.
 
-## Speed testing
+## Comprehensive connection testing
 
-The speed test uses Cloudflare's public speed-test endpoints over HTTPS and requires no account. It performs five lightweight latency requests, downloads 25 MB, and uploads 10 MB. The result is a practical throughput estimate, not a certified ISP benchmark. It starts a few seconds into a session and repeats about once per hour.
+The test uses Cloudflare's public speed-test endpoints over HTTPS and requires no account. It:
 
-Speed and ping jobs use independent in-process guards. A second copy of either job cannot overlap the first. Monitoring schedules the next 30-second delay only after the current job finishes. Speed-test failures are saved with their error and never terminate monitoring.
+1. sends multiple native pings to establish an idle baseline;
+2. repeatedly downloads test data while separate native pings run concurrently;
+3. repeatedly uploads test data while separate native pings run concurrently; and
+4. compares each loaded average with the baseline.
+
+Each load phase lasts at least eight seconds by default so the latency samples are taken while the
+transfer is stressing the connection, rather than substituting a server-reported ping. Loaded
+latency increases can reveal responsiveness problems under load, including possible queueing,
+bufferbloat, or congestion behavior, but one result is a clue rather than a diagnosis. The figures
+are practical local estimates, not a reproduction of a commercial benchmark.
+
+The first automatic test is scheduled about one hour after monitoring starts and repeats hourly;
+startup remains lightweight. The dashboard can run the identical test manually at any time while
+monitoring is active. An in-process guard prevents manual and automatic tests from overlapping.
+
+Connection-test and ping jobs use independent in-process guards. Monitoring schedules the next
+30-second delay only after the current lightweight job finishes. Connection-test failures or partial
+download/upload results are saved and never terminate monitoring.
 
 ## Local data and privacy
 
@@ -112,6 +139,8 @@ Defaults work without configuration. Advanced users can set these environment va
 | `PINGTRAIL_SPEED_INTERVAL_MS` | `3600000` | Speed-test interval |
 | `PINGTRAIL_SPEED_DOWNLOAD_BYTES` | `25000000` | Download test size |
 | `PINGTRAIL_SPEED_UPLOAD_BYTES` | `10000000` | Upload test size |
+| `PINGTRAIL_CONNECTION_MIN_LOAD_MS` | `8000` | Minimum duration of each loaded phase |
+| `PINGTRAIL_CONNECTION_BASELINE_PINGS` | `8` | Pings used for the unloaded baseline |
 | `PINGTRAIL_CHART_POINT_LIMIT` | `500` | Maximum raw samples returned for the chart |
 
 PowerShell example:
@@ -129,7 +158,7 @@ npm start
 - **SQLite:** `better-sqlite3` provides simple transactions and prepared statements. WAL mode improves read/write coexistence. Indexed timestamps, session IDs, check IDs, and target fields support later historical analysis.
 - **Permissions/firewalls:** PingTrail does not need Administrator rights in typical Windows setups. A firewall, VPN, security product, or network policy may block ICMP or route commands; those conditions appear as unavailable gateway or loss. HTTPS access to `speed.cloudflare.com` is needed only for speed tests.
 - **Sleep:** The MVP monitors only while the computer is awake. A future optional Windows adapter can call `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` while monitoring, which keeps the system awake without requesting `ES_DISPLAY_REQUIRED`, and clear it on stop/exit. This is intentionally not implemented until its lifecycle can be validated on Windows.
-- **Speed estimates:** One server and finite transfers cannot characterize every connection. VPNs, proxies, Wi-Fi contention, and very fast links can influence the number.
+- **Connection-test estimates:** One server and finite transfers cannot characterize every connection. VPNs, proxies, Wi-Fi contention, ICMP prioritization, and very fast links can influence the numbers. Test manually on Windows to confirm local firewall and Cloudflare endpoint access.
 
 ## Project layout
 
@@ -144,7 +173,21 @@ public/             Plain HTML, CSS, JavaScript, and derived logo asset
 test/               Node test-runner unit and service tests
 ```
 
-The original logo remains at `edited-photo.png`; `public/assets/pingtrail-logo.png` is a derived copy used in the header and as the favicon.
+## Roadmap
+
+PingTrail is still evolving. Some features planned for future releases include:
+
+- **Expanded historical charts** — Toggle between latency, jitter, packet loss, and other metrics with selectable time ranges such as 15 minutes, 1 hour, 6 hours, 24 hours, or the full monitoring session.
+- **Local mobile dashboard** — View and control PingTrail from another device on the same network. Leave PingTrail running on a computer and use a phone to check connection health or mark a problem the moment lag occurs.
+- **Automatic problem detection** — Identify latency spikes, packet loss, high jitter, local-network instability, and loaded-latency events automatically.
+- **Diagnostic event timeline** — Combine detected network events, connection tests, and manually marked problems into a single timeline to make intermittent issues easier to investigate.
+- **Session diagnosis** — Summarize each monitoring session and provide diagnostic clues about whether problems appear to originate on the local network, beyond the router, or primarily while the connection is under load.
+- **Historical connection tests** — Track throughput and loaded-latency results over time to reveal recurring congestion or responsiveness problems.
+- **Diagnostic report export** — Export monitoring results, problem events, connection tests, and summaries for troubleshooting or sharing with an ISP.
+- **Improved mobile experience** — A responsive interface designed for quickly checking PingTrail while troubleshooting another device, gaming, or moving around the network.
+- **View historical sessions** — Select any previous monitoring session from Recent Sessions to reload its charts, statistics, connection tests, and problem markers for later review.
+
+The long-term goal is for PingTrail to go beyond showing network statistics and help answer a more useful question: **when something went wrong, where did the problem most likely begin?**
 
 ## Contributing
 
