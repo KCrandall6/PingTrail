@@ -141,3 +141,15 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+
+# PingTrail runtime data (kept local to each installation)
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# Local configuration overrides and temporary speed-test data
+config.local.json
+tmp/
