@@ -23,5 +23,7 @@ module.exports = Object.freeze({
   speedTestIntervalMs: positiveInteger(process.env.PINGTRAIL_SPEED_INTERVAL_MS, 3_600_000),
   speedTestDownloadBytes: positiveInteger(process.env.PINGTRAIL_SPEED_DOWNLOAD_BYTES, 25_000_000),
   speedTestUploadBytes: positiveInteger(process.env.PINGTRAIL_SPEED_UPLOAD_BYTES, 10_000_000),
+  connectionTestMinimumLoadMs: positiveInteger(process.env.PINGTRAIL_CONNECTION_MIN_LOAD_MS, 8_000),
+  connectionTestBaselinePings: positiveInteger(process.env.PINGTRAIL_CONNECTION_BASELINE_PINGS, 8),
   chartPointLimit: positiveInteger(process.env.PINGTRAIL_CHART_POINT_LIMIT, 500)
 });

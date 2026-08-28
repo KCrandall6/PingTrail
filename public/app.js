@@ -8,6 +8,10 @@ function number(value, unit = ' ms', digits = 1) {
   return value == null ? '—' : `${Number(value).toFixed(digits)}${unit}`;
 }
 
+function increase(value) {
+  return value == null ? '—' : `${value >= 0 ? '+' : ''}${Number(value).toFixed(1)} ms`;
+}
+
 function average(values) {
   const present = values.filter((value) => value != null);
   return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
@@ -130,6 +134,8 @@ function render(nextState) {
     : 'Start a session to leave a trail of router and internet health measurements.';
   elements.monitorButton.textContent = active ? 'Stop monitoring' : 'Start monitoring';
   elements.problemButton.disabled = !active;
+  elements.connectionTestButton.disabled = !active || state.speedTestRunning;
+  elements.connectionTestButton.textContent = state.speedTestRunning ? 'Connection Test Running…' : 'Run Connection Test';
 
   const checks = state.latestCheck || [];
   const router = checks.find((sample) => sample.targetType === 'router');
@@ -155,13 +161,20 @@ function render(nextState) {
   const speed = state.latestSpeedTest;
   elements.speedHeadline.textContent = state.speedTestRunning
     ? 'Test in progress…'
-    : speed?.error ? 'Test unavailable' : speed ? 'Connection throughput' : 'Not tested yet';
+    : speed?.status === 'failed' ? 'Test unavailable' : speed?.status === 'partial' ? 'Partial result' : speed ? 'Connection results' : 'Not tested yet';
+  const phaseLabels = { baseline: 'Measuring baseline…', download: 'Testing download…', upload: 'Testing upload…' };
+  elements.testPhase.textContent = state.speedTestRunning ? phaseLabels[state.connectionTestPhase] || 'Running connection test…' : '';
+  elements.baselineLatency.textContent = number(speed?.unloadedLatency);
+  elements.baselineDetails.textContent = `Jitter ${number(speed?.unloadedJitter)} • Loss ${number(speed?.unloadedPacketLoss, '%')}`;
   elements.downloadSpeed.textContent = number(speed?.downloadMbps, ' Mbps');
   elements.uploadSpeed.textContent = number(speed?.uploadMbps, ' Mbps');
-  elements.speedLatency.textContent = number(speed?.latency);
+  elements.downloadLoaded.textContent = number(speed?.downloadLoadedLatency);
+  elements.downloadIncrease.textContent = increase(speed?.downloadLatencyIncrease);
+  elements.uploadLoaded.textContent = number(speed?.uploadLoadedLatency);
+  elements.uploadIncrease.textContent = increase(speed?.uploadLatencyIncrease);
   elements.speedTime.textContent = speed
-    ? speed.error ? `${formatTime(speed.recordedAt)} • ${speed.error}` : `Measured ${formatTime(speed.recordedAt)}`
-    : 'Runs once near session start, then hourly.';
+    ? `${formatTime(speed.recordedAt)} • ${speed.triggerType === 'manual' ? 'Manual' : 'Automatic'}${speed.error ? ` • ${speed.error}` : ''}`
+    : 'Run one manually, or wait for the hourly automatic test.';
   drawChart(state.chart, state.problems);
 }
 
@@ -193,6 +206,13 @@ elements.monitorButton.addEventListener('click', async () => {
   finally { elements.monitorButton.disabled = false; }
 });
 elements.problemButton.addEventListener('click', () => elements.problemDialog.showModal());
+elements.connectionTestButton.addEventListener('click', async () => {
+  elements.connectionTestButton.disabled = true;
+  try {
+    await api('/api/connection-test', { method: 'POST' });
+    await refresh();
+  } catch (error) { toast(error.message); }
+});
 elements.problemForm.addEventListener('submit', async (event) => {
   if (event.submitter?.value === 'cancel') return;
   event.preventDefault();

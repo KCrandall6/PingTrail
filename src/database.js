@@ -57,6 +57,19 @@ class PingTrailDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_problems_session_time ON problem_markers(session_id, recorded_at);
     `);
+    const speedColumns = new Set(this.db.prepare('PRAGMA table_info(speed_tests)').all().map((column) => column.name));
+    const additions = {
+      trigger_type: "TEXT NOT NULL DEFAULT 'automatic' CHECK(trigger_type IN ('manual', 'automatic'))",
+      target: 'TEXT', status: "TEXT NOT NULL DEFAULT 'complete'", unloaded_latency: 'REAL',
+      unloaded_min_latency: 'REAL', unloaded_max_latency: 'REAL', unloaded_jitter: 'REAL',
+      unloaded_packet_loss: 'REAL', download_loaded_latency: 'REAL', download_loaded_jitter: 'REAL',
+      download_loaded_packet_loss: 'REAL', download_latency_increase: 'REAL',
+      upload_loaded_latency: 'REAL', upload_loaded_jitter: 'REAL', upload_loaded_packet_loss: 'REAL',
+      upload_latency_increase: 'REAL'
+    };
+    for (const [name, definition] of Object.entries(additions)) {
+      if (!speedColumns.has(name)) this.db.exec(`ALTER TABLE speed_tests ADD COLUMN ${name} ${definition}`);
+    }
   }
 
   recoverInterruptedSessions() {
@@ -91,8 +104,16 @@ class PingTrailDatabase {
 
   insertSpeedTest(result) {
     const query = `INSERT INTO speed_tests
-      (session_id, recorded_at, download_mbps, upload_mbps, latency, error)
-      VALUES (@sessionId, @recordedAt, @downloadMbps, @uploadMbps, @latency, @error)`;
+      (session_id, recorded_at, trigger_type, target, status, unloaded_latency, unloaded_min_latency,
+       unloaded_max_latency, unloaded_jitter, unloaded_packet_loss, download_mbps,
+       download_loaded_latency, download_loaded_jitter, download_loaded_packet_loss,
+       download_latency_increase, upload_mbps, upload_loaded_latency, upload_loaded_jitter,
+       upload_loaded_packet_loss, upload_latency_increase, latency, error)
+      VALUES (@sessionId, @recordedAt, @triggerType, @target, @status, @unloadedLatency,
+       @unloadedMinLatency, @unloadedMaxLatency, @unloadedJitter, @unloadedPacketLoss,
+       @downloadMbps, @downloadLoadedLatency, @downloadLoadedJitter, @downloadLoadedPacketLoss,
+       @downloadLatencyIncrease, @uploadMbps, @uploadLoadedLatency, @uploadLoadedJitter,
+       @uploadLoadedPacketLoss, @uploadLatencyIncrease, @unloadedLatency, @error)`;
     this.db.prepare(query).run(result);
   }
 
@@ -139,8 +160,13 @@ class PingTrailDatabase {
   }
 
   getLatestSpeedTest(sessionId) {
-    const query = `SELECT recorded_at AS recordedAt, download_mbps AS downloadMbps,
-      upload_mbps AS uploadMbps, latency, error FROM speed_tests
+    const query = `SELECT recorded_at AS recordedAt, trigger_type AS triggerType, target, status,
+      unloaded_latency AS unloadedLatency, unloaded_min_latency AS unloadedMinLatency,
+      unloaded_max_latency AS unloadedMaxLatency, unloaded_jitter AS unloadedJitter,
+      unloaded_packet_loss AS unloadedPacketLoss, download_mbps AS downloadMbps,
+      download_loaded_latency AS downloadLoadedLatency, download_latency_increase AS downloadLatencyIncrease,
+      upload_mbps AS uploadMbps, upload_loaded_latency AS uploadLoadedLatency,
+      upload_latency_increase AS uploadLatencyIncrease, error FROM speed_tests
       WHERE session_id = ? ORDER BY recorded_at DESC LIMIT 1`;
     return this.db.prepare(query).get(sessionId) || null;
   }

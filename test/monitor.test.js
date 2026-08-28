@@ -1,5 +1,3 @@
-'use strict';
-
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const MonitorService = require('../src/monitor');
@@ -25,7 +23,13 @@ function fixture() {
   };
   const config = { monitoringIntervalMs: 30_000, pingCount: 5, pingTimeoutMs: 5000, externalTargets: ['1.1.1.1', '8.8.8.8'], speedTestIntervalMs: 3_600_000, speedTestDownloadBytes: 1, speedTestUploadBytes: 1, chartPointLimit: 500 };
   const quietLog = { info() {}, warn() {}, error() {} };
-  return { monitor: new MonitorService({ database, config, networkService, speedTestService: { runSpeedTest: async () => ({ downloadMbps: 100, uploadMbps: 20, latency: 10 }) }, log: quietLog }), stored };
+  const connectionResult = { target: '1.1.1.1', status: 'complete', unloadedLatency: 10,
+    unloadedMinLatency: 9, unloadedMaxLatency: 11, unloadedJitter: 1, unloadedPacketLoss: 0,
+    downloadMbps: 100, downloadLoadedLatency: 30, downloadLoadedJitter: 2,
+    downloadLoadedPacketLoss: 0, downloadLatencyIncrease: 20, uploadMbps: 20,
+    uploadLoadedLatency: 40, uploadLoadedJitter: 3, uploadLoadedPacketLoss: 0,
+    uploadLatencyIncrease: 30, error: null };
+  return { monitor: new MonitorService({ database, config, networkService, speedTestService: { runConnectionTest: async () => connectionResult }, log: quietLog }), stored };
 }
 
 test('creates a session and stores router and external measurements', async () => {
@@ -58,15 +62,33 @@ test('prevents overlapping monitoring and speed-test jobs', async () => {
   monitor.speedTestRunning = false;
   assert.equal(await monitor.runSpeedTestJob(), true);
   assert.equal(stored.speeds.length, 1);
+  assert.equal(stored.speeds[0].triggerType, 'automatic');
   monitor.stop();
 });
 
 test('stores speed-test failures instead of throwing', async () => {
   const { monitor, stored } = fixture();
-  monitor.speedTestService.runSpeedTest = async () => { throw new Error('offline'); };
+  monitor.speedTestService.runConnectionTest = async () => { throw new Error('offline'); };
   await monitor.start();
   clearTimeout(monitor.monitorTimer); clearTimeout(monitor.speedTimer);
   assert.equal(await monitor.runSpeedTestJob(), false);
   assert.equal(stored.speeds[0].error, 'offline');
+  monitor.stop();
+});
+
+test('manual connection tests expose phase state and cannot overlap', async () => {
+  const { monitor, stored } = fixture();
+  await monitor.start(); clearTimeout(monitor.monitorTimer); clearTimeout(monitor.speedTimer);
+  let release;
+  monitor.speedTestService.runConnectionTest = ({ onPhase }) => new Promise((resolve) => {
+    onPhase('download'); release = () => resolve({ target: '1.1.1.1', status: 'complete', error: null });
+  });
+  const running = monitor.runConnectionTest('manual');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(monitor.getState().connectionTestPhase, 'download');
+  assert.equal(await monitor.runConnectionTest('automatic'), false);
+  release();
+  assert.equal(await running, true);
+  assert.equal(stored.speeds[0].triggerType, 'manual');
   monitor.stop();
 });
