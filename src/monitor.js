@@ -5,6 +5,8 @@ const logger = require('./logger');
 const network = require('./network');
 const speedTest = require('./speed-test');
 
+const ALLOWED_MONITORING_INTERVALS = Object.freeze([2_000, 10_000, 30_000, 60_000]);
+
 class MonitorService {
   constructor({ database, config, networkService = network, speedTestService = speedTest, log = logger }) {
     this.database = database;
@@ -14,11 +16,16 @@ class MonitorService {
     this.log = log;
     this.session = null;
     this.monitorTimer = null;
+    this.monitorScheduleGeneration = 0;
     this.speedTimer = null;
     this.monitorJobRunning = false;
     this.speedTestRunning = false;
     this.connectionTestPhase = null;
     this.gateway = null;
+    this.selectedMonitoringIntervalMs = ALLOWED_MONITORING_INTERVALS.includes(config.monitoringIntervalMs)
+      ? config.monitoringIntervalMs
+      : 10_000;
+    this.diagnosticUntil = null;
   }
 
   get active() {
@@ -37,7 +44,11 @@ class MonitorService {
   stop() {
     if (!this.active) return { stopped: false, session: null };
     clearTimeout(this.monitorTimer);
+    this.monitorTimer = null;
+    this.monitorScheduleGeneration += 1;
     clearTimeout(this.speedTimer);
+    this.speedTimer = null;
+    this.diagnosticUntil = null;
     const endedAt = this.database.stopSession(this.session.id);
     const session = { ...this.session, endedAt, status: 'stopped' };
     this.log.info('Monitoring stopped', { sessionId: session.id });
@@ -48,11 +59,60 @@ class MonitorService {
   scheduleMonitor(delay) {
     clearTimeout(this.monitorTimer);
     if (!this.active) return;
+    const generation = ++this.monitorScheduleGeneration;
     this.monitorTimer = setTimeout(async () => {
       await this.runMonitoringJob();
-      this.scheduleMonitor(this.config.monitoringIntervalMs);
+      if (generation === this.monitorScheduleGeneration) {
+        this.scheduleMonitor(this.getEffectiveMonitoringIntervalMs());
+      }
     }, delay);
     this.monitorTimer.unref?.();
+  }
+
+  get diagnosticSamplingActive() {
+    return this.selectedMonitoringIntervalMs !== this.config.diagnosticIntervalMs
+      && this.diagnosticUntil != null
+      && this.diagnosticUntil > Date.now();
+  }
+
+  getEffectiveMonitoringIntervalMs() {
+    return this.diagnosticSamplingActive
+      ? this.config.diagnosticIntervalMs
+      : this.selectedMonitoringIntervalMs;
+  }
+
+  setMonitoringInterval(intervalMs) {
+    const parsed = Number(intervalMs);
+    if (!ALLOWED_MONITORING_INTERVALS.includes(parsed)) {
+      throw new RangeError('Monitoring interval must be 2, 10, 30, or 60 seconds.');
+    }
+    this.selectedMonitoringIntervalMs = parsed;
+    this.diagnosticUntil = null;
+    if (this.active) this.scheduleMonitor(parsed);
+    return this.getMonitoringSettings();
+  }
+
+  getMonitoringSettings() {
+    return {
+      selectedIntervalMs: this.selectedMonitoringIntervalMs,
+      effectiveIntervalMs: this.getEffectiveMonitoringIntervalMs(),
+      diagnosticSamplingActive: this.diagnosticSamplingActive,
+      diagnosticUntil: this.diagnosticSamplingActive ? new Date(this.diagnosticUntil).toISOString() : null,
+      allowedIntervalsMs: ALLOWED_MONITORING_INTERVALS
+    };
+  }
+
+  shouldUseDiagnosticSampling(results) {
+    return results.some((sample) => sample.packetLoss > 0
+      || sample.avgLatency >= this.config.diagnosticLatencyThresholdMs
+      || sample.jitter >= this.config.diagnosticJitterThresholdMs);
+  }
+
+  activateDiagnosticSampling(results) {
+    if (this.selectedMonitoringIntervalMs === this.config.diagnosticIntervalMs) return;
+    if (this.shouldUseDiagnosticSampling(results)) {
+      this.diagnosticUntil = Date.now() + this.config.diagnosticDurationMs;
+    }
   }
 
   async runMonitoringJob() {
@@ -102,6 +162,7 @@ class MonitorService {
 
       if (results.length && this.session?.id === sessionId) {
         this.database.insertSamples(results);
+        this.activateDiagnosticSampling(results);
         this.log.info('Network check stored', { sessionId, samples: results.length });
       }
       return true;
@@ -175,6 +236,7 @@ class MonitorService {
       jobRunning: this.monitorJobRunning,
       speedTestRunning: this.speedTestRunning,
       connectionTestPhase: this.connectionTestPhase,
+      monitoring: this.getMonitoringSettings(),
       session: null
     };
     if (!this.session) return state;

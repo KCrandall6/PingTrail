@@ -11,7 +11,8 @@ PingTrail is a small, open-source, local-first network monitor for diagnosing in
 - Backend monitoring that continues when the browser is closed
 - A fresh retained session each time monitoring starts
 - Automatic IPv4 default-gateway detection
-- Five pings each to the router, `1.1.1.1`, and `8.8.8.8` every 30 seconds
+- Five pings each to the router, `1.1.1.1`, and `8.8.8.8` at a selectable 2, 10, 30, or 60-second interval (10 seconds by default)
+- Automatic 2-second diagnostic sampling for about one minute after latency, loss, or jitter events
 - SQLite persistence of success, packet loss, and unreachable targets
 - Start/stop control, latest check, live duration, summaries, recent sessions, and a latency chart
 - Optional timestamped “Mark Problem” notes, shown as red dashed lines on the chart
@@ -104,9 +105,10 @@ are practical local estimates, not a reproduction of a commercial benchmark.
 The first automatic test is scheduled about one hour after monitoring starts and repeats hourly;
 startup remains lightweight. The dashboard can run the identical test manually at any time while
 monitoring is active. An in-process guard prevents manual and automatic tests from overlapping.
+The lightweight ping interval does not alter this hourly/manual connection-test schedule.
 
 Connection-test and ping jobs use independent in-process guards. Monitoring schedules the next
-30-second delay only after the current lightweight job finishes. Connection-test failures or partial
+selected delay only after the current lightweight job finishes. Connection-test failures or partial
 download/upload results are saved and never terminate monitoring.
 
 ## Local data and privacy
@@ -132,7 +134,7 @@ Defaults work without configuration. Advanced users can set these environment va
 | `PORT` | `3000` | Local dashboard port |
 | `PINGTRAIL_HOST` | `127.0.0.1` | Listen address; changing this may expose private data on the LAN |
 | `PINGTRAIL_DB_PATH` | `data/pingtrail.sqlite` | SQLite file path |
-| `PINGTRAIL_MONITOR_INTERVAL_MS` | `30000` | Delay between completed monitoring jobs |
+| `PINGTRAIL_MONITOR_INTERVAL_MS` | `10000` | Initial delay between completed monitoring jobs (supported values: 2000, 10000, 30000, 60000) |
 | `PINGTRAIL_PING_COUNT` | `5` | Pings per target per check |
 | `PINGTRAIL_PING_TIMEOUT_MS` | `5000` | Per-ping timeout |
 | `PINGTRAIL_EXTERNAL_TARGETS` | `1.1.1.1,8.8.8.8` | Comma-separated IPv4 targets |
