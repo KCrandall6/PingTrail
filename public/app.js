@@ -3,6 +3,7 @@
 const elements = Object.fromEntries([...document.querySelectorAll('[id]')].map((element) => [element.id, element]));
 let state = { active: false };
 let durationTimer;
+const intervalStorageKey = 'pingtrail.monitoringIntervalMs';
 
 function number(value, unit = ' ms', digits = 1) {
   return value == null ? '—' : `${Number(value).toFixed(digits)}${unit}`;
@@ -136,6 +137,10 @@ function render(nextState) {
   elements.problemButton.disabled = !active;
   elements.connectionTestButton.disabled = !active || state.speedTestRunning;
   elements.connectionTestButton.textContent = state.speedTestRunning ? 'Connection Test Running…' : 'Run Connection Test';
+  if (state.monitoring) {
+    elements.monitoringInterval.value = String(state.monitoring.selectedIntervalMs);
+    elements.diagnosticStatus.hidden = !state.monitoring.diagnosticSamplingActive;
+  }
 
   const checks = state.latestCheck || [];
   const router = checks.find((sample) => sample.targetType === 'router');
@@ -205,6 +210,23 @@ elements.monitorButton.addEventListener('click', async () => {
   } catch (error) { toast(error.message); }
   finally { elements.monitorButton.disabled = false; }
 });
+elements.monitoringInterval.addEventListener('change', async () => {
+  const intervalMs = Number(elements.monitoringInterval.value);
+  elements.monitoringInterval.disabled = true;
+  try {
+    localStorage.setItem(intervalStorageKey, String(intervalMs));
+    await api('/api/settings/monitoring-interval', {
+      method: 'PUT',
+      body: JSON.stringify({ intervalMs })
+    });
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+    if (state.monitoring) elements.monitoringInterval.value = String(state.monitoring.selectedIntervalMs);
+  } finally {
+    elements.monitoringInterval.disabled = false;
+  }
+});
 elements.problemButton.addEventListener('click', () => elements.problemDialog.showModal());
 elements.connectionTestButton.addEventListener('click', async () => {
   elements.connectionTestButton.disabled = true;
@@ -232,4 +254,18 @@ setInterval(refresh, 5_000);
 durationTimer = setInterval(() => {
   if (state.active) elements.duration.textContent = formatDuration(state.session.startedAt);
 }, 1_000);
-Promise.all([refresh(), refreshSessions()]);
+async function initialize() {
+  const savedInterval = Number(localStorage.getItem(intervalStorageKey));
+  if ([2_000, 10_000, 30_000, 60_000].includes(savedInterval)) {
+    try {
+      await api('/api/settings/monitoring-interval', {
+        method: 'PUT',
+        body: JSON.stringify({ intervalMs: savedInterval })
+      });
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+  await Promise.all([refresh(), refreshSessions()]);
+}
+initialize();

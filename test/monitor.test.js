@@ -21,7 +21,10 @@ function fixture() {
     detectDefaultGateway: async () => '192.168.1.1',
     pingTarget: async (target) => target === '8.8.8.8' ? { ...successful, packetsReceived: 0, packetLoss: 100, avgLatency: null } : successful
   };
-  const config = { monitoringIntervalMs: 30_000, pingCount: 5, pingTimeoutMs: 5000, externalTargets: ['1.1.1.1', '8.8.8.8'], speedTestIntervalMs: 3_600_000, speedTestDownloadBytes: 1, speedTestUploadBytes: 1, chartPointLimit: 500 };
+  const config = { monitoringIntervalMs: 10_000, diagnosticIntervalMs: 2_000, diagnosticDurationMs: 60_000,
+    diagnosticLatencyThresholdMs: 100, diagnosticJitterThresholdMs: 50, pingCount: 5, pingTimeoutMs: 5000,
+    externalTargets: ['1.1.1.1', '8.8.8.8'], speedTestIntervalMs: 3_600_000,
+    speedTestDownloadBytes: 1, speedTestUploadBytes: 1, chartPointLimit: 500 };
   const quietLog = { info() {}, warn() {}, error() {} };
   const connectionResult = { target: '1.1.1.1', status: 'complete', unloadedLatency: 10,
     unloadedMinLatency: 9, unloadedMaxLatency: 11, unloadedJitter: 1, unloadedPacketLoss: 0,
@@ -91,4 +94,77 @@ test('manual connection tests expose phase state and cannot overlap', async () =
   assert.equal(await running, true);
   assert.equal(stored.speeds[0].triggerType, 'manual');
   monitor.stop();
+});
+
+test('uses a 10-second default and accepts only the four supported intervals', () => {
+  const { monitor } = fixture();
+  assert.equal(monitor.getMonitoringSettings().selectedIntervalMs, 10_000);
+  for (const intervalMs of [2_000, 10_000, 30_000, 60_000]) {
+    assert.equal(monitor.setMonitoringInterval(intervalMs).selectedIntervalMs, intervalMs);
+  }
+  assert.throws(() => monitor.setMonitoringInterval(5_000), /2, 10, 30, or 60/);
+});
+
+test('changing intervals invalidates the old loop and schedules exactly one replacement', async () => {
+  const { monitor } = fixture();
+  await monitor.start();
+  const originalGeneration = monitor.monitorScheduleGeneration;
+  monitor.setMonitoringInterval(30_000);
+  assert.equal(monitor.monitorScheduleGeneration, originalGeneration + 1);
+  assert.equal(monitor.getMonitoringSettings().effectiveIntervalMs, 30_000);
+  monitor.stop();
+});
+
+test('packet loss activates diagnostic sampling and it expires after 60 seconds', async () => {
+  const { monitor } = fixture();
+  await monitor.start();
+  clearTimeout(monitor.monitorTimer);
+  clearTimeout(monitor.speedTimer);
+  const originalNow = Date.now;
+  let now = originalNow();
+  Date.now = () => now;
+  try {
+    await monitor.runMonitoringJob();
+    assert.equal(monitor.getMonitoringSettings().diagnosticSamplingActive, true);
+    assert.equal(monitor.getEffectiveMonitoringIntervalMs(), 2_000);
+    now += 60_001;
+    assert.equal(monitor.getMonitoringSettings().diagnosticSamplingActive, false);
+    assert.equal(monitor.getEffectiveMonitoringIntervalMs(), 10_000);
+  } finally {
+    Date.now = originalNow;
+    monitor.stop();
+  }
+});
+
+test('high latency and jitter qualify for diagnostic sampling', () => {
+  const { monitor } = fixture();
+  const healthy = { packetLoss: 0, avgLatency: 20, jitter: 3 };
+  assert.equal(monitor.shouldUseDiagnosticSampling([healthy]), false);
+  assert.equal(monitor.shouldUseDiagnosticSampling([{ ...healthy, avgLatency: 100 }]), true);
+  assert.equal(monitor.shouldUseDiagnosticSampling([{ ...healthy, jitter: 50 }]), true);
+});
+
+test('manual 2-second sampling does not enter temporary diagnostic mode', async () => {
+  const { monitor } = fixture();
+  monitor.setMonitoringInterval(2_000);
+  await monitor.start();
+  clearTimeout(monitor.monitorTimer);
+  clearTimeout(monitor.speedTimer);
+  await monitor.runMonitoringJob();
+  assert.equal(monitor.getMonitoringSettings().diagnosticSamplingActive, false);
+  assert.equal(monitor.getEffectiveMonitoringIntervalMs(), 2_000);
+  monitor.stop();
+});
+
+test('stopping clears monitoring and speed-test timers without running a loaded test', async () => {
+  const { monitor, stored } = fixture();
+  await monitor.start();
+  clearTimeout(monitor.monitorTimer);
+  await monitor.runMonitoringJob();
+  assert.equal(stored.speeds.length, 0);
+  monitor.scheduleMonitor(60_000);
+  monitor.stop();
+  assert.equal(monitor.monitorTimer, null);
+  assert.equal(monitor.speedTimer, null);
+  assert.equal(monitor.getMonitoringSettings().diagnosticSamplingActive, false);
 });

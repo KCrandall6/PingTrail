@@ -25,6 +25,15 @@
         <p id="heroCopy">Start a session to leave a trail of router and internet health measurements.</p>
       </div>
       <div class="hero-actions">
+        <label class="interval-control" for="monitoringInterval">Monitoring interval
+          <select id="monitoringInterval">
+            <option value="2000">2 seconds — Diagnostic / gaming</option>
+            <option value="10000" selected>10 seconds — Normal (recommended)</option>
+            <option value="30000">30 seconds</option>
+            <option value="60000">60 seconds</option>
+          </select>
+        </label>
+        <span id="diagnosticStatus" class="diagnostic-status" hidden>Diagnostic sampling active — 2s</span>
         <button id="monitorButton" class="primary">Start monitoring</button>
         <button id="problemButton" class="secondary" disabled>Mark a problem</button>
         <button id="connectionTestButton" class="secondary" disabled>Run Connection Test</button>

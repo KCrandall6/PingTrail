@@ -34,6 +34,15 @@ function createApp({ monitor, database, publicDirectory = path.join(__dirname, '
     }
   });
 
+  app.put('/api/settings/monitoring-interval', (request, response, next) => {
+    try {
+      response.json(monitor.setMonitoringInterval(request.body?.intervalMs));
+    } catch (error) {
+      if (error instanceof RangeError) return response.status(400).json({ error: error.message });
+      return next(error);
+    }
+  });
+
   app.post('/api/connection-test', async (request, response, next) => {
     try {
       if (!monitor.active) return response.status(409).json({ error: 'Start monitoring before running a connection test.' });
