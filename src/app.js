@@ -2,6 +2,20 @@
 
 const path = require('node:path');
 const express = require('express');
+const { gradeSession } = require('./session-quality');
+
+function sessionPayload(database, session, allChartData = false) {
+  const summary = database.getSessionSummary(session.id);
+  return {
+    session,
+    latestCheck: database.getLatestCheck(session.id),
+    summary,
+    quality: gradeSession({ ...session, summary }),
+    chart: allChartData ? database.getAllChartData(session.id) : undefined,
+    latestSpeedTest: database.getLatestSpeedTest(session.id),
+    problems: database.getProblems(session.id)
+  };
+}
 
 function createApp({ monitor, database, publicDirectory = path.join(__dirname, '..', 'public') }) {
   const app = express();
@@ -71,9 +85,26 @@ function createApp({ monitor, database, publicDirectory = path.join(__dirname, '
 
   app.get('/api/sessions', (request, response, next) => {
     try {
-      response.json(database.getRecentSessions(10));
+      const sessions = database.getRecentSessions(10).map((session) => {
+        const summary = database.getSessionSummary(session.id);
+        return { ...session, summary, quality: gradeSession({ ...session, summary }) };
+      });
+      response.json(sessions);
     } catch (error) {
       next(error);
+    }
+  });
+
+  app.get('/api/sessions/:sessionId', (request, response, next) => {
+    try {
+      if (!/^\d+$/.test(request.params.sessionId) || Number(request.params.sessionId) < 1) {
+        return response.status(400).json({ error: 'Session ID must be a positive integer.' });
+      }
+      const session = database.getSession(Number(request.params.sessionId));
+      if (!session) return response.status(404).json({ error: 'Session not found.' });
+      return response.json(sessionPayload(database, session, true));
+    } catch (error) {
+      return next(error);
     }
   });
 

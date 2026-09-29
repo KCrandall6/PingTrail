@@ -2,6 +2,9 @@
 
 const elements = Object.fromEntries([...document.querySelectorAll('[id]')].map((element) => [element.id, element]));
 let state = { active: false };
+let historicalState = null;
+let selectedSessionId = null;
+let sessionRequest = 0;
 let durationTimer;
 const intervalStorageKey = 'pingtrail.monitoringIntervalMs';
 
@@ -124,25 +127,25 @@ function drawChart(samples = [], problems = []) {
   context.fillText(endLabel, width - padding.right - context.measureText(endLabel).width, height - 7);
 }
 
-function render(nextState) {
-  state = nextState;
-  const active = state.active;
+function render(nextState, liveState = nextState) {
+  const historical = nextState !== liveState;
+  const active = liveState.active;
   elements.statusDot.classList.toggle('active', active);
   elements.statusText.textContent = active ? 'Monitoring active' : 'Monitoring is off';
   elements.heroTitle.textContent = active ? 'Watching your connection.' : 'Ready when you are.';
   elements.heroCopy.textContent = active
-    ? `Session #${state.session.id} • Gateway ${state.gateway || 'being detected'}`
+    ? `Session #${liveState.session.id} • Gateway ${liveState.gateway || 'being detected'}`
     : 'Start a session to leave a trail of router and internet health measurements.';
   elements.monitorButton.textContent = active ? 'Stop monitoring' : 'Start monitoring';
   elements.problemButton.disabled = !active;
-  elements.connectionTestButton.disabled = !active || state.speedTestRunning;
-  elements.connectionTestButton.textContent = state.speedTestRunning ? 'Connection Test Running…' : 'Run Connection Test';
-  if (state.monitoring) {
-    elements.monitoringInterval.value = String(state.monitoring.selectedIntervalMs);
-    elements.diagnosticStatus.hidden = !state.monitoring.diagnosticSamplingActive;
+  elements.connectionTestButton.disabled = !active || liveState.speedTestRunning;
+  elements.connectionTestButton.textContent = liveState.speedTestRunning ? 'Connection Test Running…' : 'Run Connection Test';
+  if (liveState.monitoring) {
+    elements.monitoringInterval.value = String(liveState.monitoring.selectedIntervalMs);
+    elements.diagnosticStatus.hidden = !liveState.monitoring.diagnosticSamplingActive;
   }
 
-  const checks = state.latestCheck || [];
+  const checks = nextState.latestCheck || [];
   const router = checks.find((sample) => sample.targetType === 'router');
   const external = checks.filter((sample) => sample.targetType === 'external');
   elements.routerLatency.textContent = number(router?.avgLatency);
@@ -152,23 +155,36 @@ function render(nextState) {
   elements.jitter.textContent = number(average(checks.map((sample) => sample.jitter)));
   elements.lastUpdated.textContent = checks[0] ? `Measured ${formatTime(checks[0].recordedAt)}` : 'Waiting for a measurement';
 
-  const summary = state.summary || {};
+  const summary = nextState.summary || {};
   elements.avgRouter.textContent = number(summary.averageRouterLatency);
   elements.avgInternet.textContent = number(summary.averageInternetLatency);
+  elements.minLatency.textContent = number(summary.minimumLatency);
   elements.maxLatency.textContent = number(summary.maximumLatency);
   elements.avgJitter.textContent = number(summary.averageJitter);
+  elements.overallLoss.textContent = number(summary.packetLossPercent, '%');
+  elements.spikeCount.textContent = summary.significantSpikeCount || 0;
   elements.lossEvents.textContent = summary.packetLossEvents || 0;
   elements.worstLoss.textContent = number(summary.worstPacketLoss, '%');
   elements.sampleCount.textContent = summary.sampleCount || 0;
-  elements.problemCount.textContent = (state.problems || []).length;
-  elements.duration.textContent = active ? formatDuration(state.session.startedAt) : '00:00:00';
+  elements.problemCount.textContent = (nextState.problems || []).length;
+  elements.duration.textContent = nextState.session ? formatDuration(nextState.session.startedAt, nextState.session.endedAt) : '00:00:00';
 
-  const speed = state.latestSpeedTest;
-  elements.speedHeadline.textContent = state.speedTestRunning
+  const quality = nextState.quality;
+  elements.qualityGrade.textContent = quality?.grade || '—';
+  elements.qualityGrade.className = quality?.grade ? `grade grade-${quality.grade.toLowerCase()}` : 'grade grade-na';
+  elements.qualityExplanation.textContent = quality?.explanation || 'Not enough data to grade.';
+  elements.qualityBreakdown.textContent = quality?.breakdown
+    ? `Latency ${quality.breakdown.latency} • Jitter ${quality.breakdown.jitter} • Loss ${quality.breakdown.packetLoss} • Stability ${quality.breakdown.stability}` : '';
+  elements.historyNotice.hidden = !historical;
+  elements.trailContext.textContent = historical ? `Historical session #${nextState.session.id}` : 'Current session';
+  elements.historySessionTime.textContent = historical ? formatTime(nextState.session.startedAt) : '';
+
+  const speed = nextState.latestSpeedTest;
+  elements.speedHeadline.textContent = !historical && liveState.speedTestRunning
     ? 'Test in progress…'
     : speed?.status === 'failed' ? 'Test unavailable' : speed?.status === 'partial' ? 'Partial result' : speed ? 'Connection results' : 'Not tested yet';
   const phaseLabels = { baseline: 'Measuring baseline…', download: 'Testing download…', upload: 'Testing upload…' };
-  elements.testPhase.textContent = state.speedTestRunning ? phaseLabels[state.connectionTestPhase] || 'Running connection test…' : '';
+  elements.testPhase.textContent = !historical && liveState.speedTestRunning ? phaseLabels[liveState.connectionTestPhase] || 'Running connection test…' : '';
   elements.baselineLatency.textContent = number(speed?.unloadedLatency);
   elements.baselineDetails.textContent = `Jitter ${number(speed?.unloadedJitter)} • Loss ${number(speed?.unloadedPacketLoss, '%')}`;
   elements.downloadSpeed.textContent = number(speed?.downloadMbps, ' Mbps');
@@ -180,12 +196,13 @@ function render(nextState) {
   elements.speedTime.textContent = speed
     ? `${formatTime(speed.recordedAt)} • ${speed.triggerType === 'manual' ? 'Manual' : 'Automatic'}${speed.error ? ` • ${speed.error}` : ''}`
     : 'Run one manually, or wait for the hourly automatic test.';
-  drawChart(state.chart, state.problems);
+  drawChart(nextState.chart, nextState.problems);
 }
 
 async function refresh() {
   try {
-    render(await api('/api/state'));
+    state = await api('/api/state');
+    render(historicalState || state, state);
   } catch (error) {
     toast(error.message);
   }
@@ -194,7 +211,7 @@ async function refresh() {
 async function refreshSessions() {
   try {
     const sessions = await api('/api/sessions');
-    const rows = sessions.map((session) => `<div class="session-row"><strong>Session #${session.id}</strong><span>${session.status}</span><small>${formatTime(session.startedAt)}</small><small>${session.sampleCount} samples</small></div>`);
+    const rows = sessions.map((session) => `<button class="session-row${selectedSessionId === session.id ? ' selected' : ''}" data-session-id="${session.id}" aria-pressed="${selectedSessionId === session.id}"><span><strong>${formatTime(session.startedAt)}</strong><small>Session #${session.id} • ${formatDuration(session.startedAt, session.endedAt)}</small></span><span class="session-meta"><b class="mini-grade">${session.quality?.grade || '—'}</b><small>${session.sampleCount} samples</small></span></button>`);
     elements.sessions.innerHTML = rows.length ? rows.join('') : '<p class="empty">No sessions yet.</p>';
   } catch (error) {
     elements.sessions.innerHTML = '<p class="empty">History unavailable.</p>';
@@ -209,6 +226,36 @@ elements.monitorButton.addEventListener('click', async () => {
     await Promise.all([refresh(), refreshSessions()]);
   } catch (error) { toast(error.message); }
   finally { elements.monitorButton.disabled = false; }
+});
+elements.sessions.addEventListener('click', async (event) => {
+  const row = event.target.closest('[data-session-id]');
+  if (!row) return;
+  const sessionId = Number(row.dataset.sessionId);
+  if (state.active && state.session?.id === sessionId) {
+    historicalState = null;
+    selectedSessionId = null;
+    render(state, state);
+    await refreshSessions();
+    return;
+  }
+  const request = ++sessionRequest;
+  row.disabled = true;
+  try {
+    const loaded = await api(`/api/sessions/${sessionId}`);
+    if (request !== sessionRequest) return;
+    selectedSessionId = sessionId;
+    historicalState = loaded;
+    render(historicalState, state);
+    await refreshSessions();
+  } catch (error) { toast(error.message); }
+  finally { row.disabled = false; }
+});
+elements.returnLiveButton.addEventListener('click', async () => {
+  sessionRequest += 1;
+  historicalState = null;
+  selectedSessionId = null;
+  render(state, state);
+  await refreshSessions();
 });
 elements.monitoringInterval.addEventListener('change', async () => {
   const intervalMs = Number(elements.monitoringInterval.value);
@@ -249,10 +296,10 @@ elements.problemForm.addEventListener('submit', async (event) => {
     await refresh();
   } catch (error) { toast(error.message); }
 });
-window.addEventListener('resize', () => drawChart(state.chart, state.problems));
+window.addEventListener('resize', () => drawChart((historicalState || state).chart, (historicalState || state).problems));
 setInterval(refresh, 5_000);
 durationTimer = setInterval(() => {
-  if (state.active) elements.duration.textContent = formatDuration(state.session.startedAt);
+  if (!historicalState && state.active) elements.duration.textContent = formatDuration(state.session.startedAt);
 }, 1_000);
 async function initialize() {
   const savedInterval = Number(localStorage.getItem(intervalStorageKey));

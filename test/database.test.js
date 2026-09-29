@@ -25,3 +25,23 @@ test('persists comprehensive manual connection-test fields', { skip: !sqliteAvai
   assert.equal(stored.uploadLoadedLatency, 81);
   database.close(); fs.rmSync(directory, { recursive: true, force: true });
 });
+
+test('returns every historical sample chronologically with summary stability metrics', { skip: !sqliteAvailable && 'better-sqlite3 is not installed' }, () => {
+  const PingTrailDatabase = require('../src/database');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pingtrail-history-'));
+  const database = new PingTrailDatabase(path.join(directory, 'test.sqlite'));
+  const session = database.createSession();
+  const base = { sessionId: session.id, target: '1.1.1.1', targetType: 'external', packetsSent: 5,
+    packetsReceived: 5, packetLoss: 0, minLatency: 10, avgLatency: 20, maxLatency: 25, jitter: 2 };
+  database.insertSamples([
+    { ...base, checkId: 'later', recordedAt: '2026-01-01T00:00:20Z', avgLatency: 220, maxLatency: 250 },
+    { ...base, checkId: 'earlier', recordedAt: '2026-01-01T00:00:10Z', packetsReceived: 4, packetLoss: 20 }
+  ]);
+  assert.deepEqual(database.getAllChartData(session.id).map((row) => row.recordedAt),
+    ['2026-01-01T00:00:10Z', '2026-01-01T00:00:20Z']);
+  const summary = database.getSessionSummary(session.id);
+  assert.equal(summary.significantSpikeCount, 1);
+  assert.equal(summary.packetLossPercent, 10);
+  assert.equal(summary.minimumLatency, 10);
+  database.close(); fs.rmSync(directory, { recursive: true, force: true });
+});

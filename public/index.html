@@ -56,7 +56,7 @@
     <section class="content-grid">
       <article class="card chart-card">
         <div class="section-heading">
-          <div><p class="eyebrow">Current session</p><h2>Latency trail</h2></div>
+          <div><p id="trailContext" class="eyebrow">Current session</p><h2>Latency trail</h2></div>
           <div class="legend"><span class="router-key">Router</span><span class="internet-key">Internet</span></div>
         </div>
         <div class="chart-wrap">
@@ -87,13 +87,24 @@
 
     <section class="content-grid lower">
       <article class="card">
+        <div id="historyNotice" class="history-notice" hidden>
+          <span><strong>Historical session</strong><small id="historySessionTime"></small></span>
+          <button id="returnLiveButton" class="secondary">Return to Live Session</button>
+        </div>
         <p class="eyebrow">Session summary</p>
         <h2 id="duration">00:00:00</h2>
+        <div class="quality-summary" title="Grades describe measured latency, jitter, packet loss, and spikes—not total internet speed.">
+          <div><span>Connection quality ⓘ</span><strong id="qualityGrade">—</strong></div>
+          <div><p id="qualityExplanation">Not enough data to grade.</p><small id="qualityBreakdown"></small></div>
+        </div>
         <div class="summary-grid">
           <div><span>Router average</span><strong id="avgRouter">—</strong></div>
           <div><span>Internet average</span><strong id="avgInternet">—</strong></div>
+          <div><span>Minimum latency</span><strong id="minLatency">—</strong></div>
           <div><span>Maximum latency</span><strong id="maxLatency">—</strong></div>
           <div><span>Average jitter</span><strong id="avgJitter">—</strong></div>
+          <div><span>Overall packet loss</span><strong id="overallLoss">—</strong></div>
+          <div><span>Significant spikes</span><strong id="spikeCount">0</strong></div>
           <div><span>Loss events</span><strong id="lossEvents">0</strong></div>
           <div><span>Worst loss</span><strong id="worstLoss">—</strong></div>
           <div><span>Samples stored</span><strong id="sampleCount">0</strong></div>
