@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const logger = require('./logger');
 const network = require('./network');
 const speedTest = require('./speed-test');
+const { gradeSession } = require('./session-quality');
 
 const ALLOWED_MONITORING_INTERVALS = Object.freeze([2_000, 10_000, 30_000, 60_000]);
 
@@ -243,6 +244,7 @@ class MonitorService {
     state.session = this.database.getSession(this.session.id);
     state.latestCheck = this.database.getLatestCheck(this.session.id);
     state.summary = this.database.getSessionSummary(this.session.id);
+    state.quality = gradeSession({ ...state.session, summary: state.summary });
     state.chart = this.database.getChartData(this.session.id, this.config.chartPointLimit);
     state.latestSpeedTest = this.database.getLatestSpeedTest(this.session.id);
     state.problems = this.database.getProblems(this.session.id);

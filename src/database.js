@@ -141,12 +141,16 @@ class PingTrailDatabase {
 
   getSessionSummary(sessionId) {
     const query = `SELECT COUNT(*) AS sampleCount,
+      MIN(min_latency) AS minimumLatency,
       AVG(CASE WHEN target_type = 'router' THEN avg_latency END) AS averageRouterLatency,
       AVG(CASE WHEN target_type = 'external' THEN avg_latency END) AS averageInternetLatency,
       MAX(max_latency) AS maximumLatency,
       AVG(jitter) AS averageJitter,
       SUM(CASE WHEN packet_loss > 0 THEN 1 ELSE 0 END) AS packetLossEvents,
-      MAX(packet_loss) AS worstPacketLoss
+      MAX(packet_loss) AS worstPacketLoss,
+      CASE WHEN SUM(packets_sent) > 0
+        THEN 100.0 * SUM(packets_sent - packets_received) / SUM(packets_sent) END AS packetLossPercent,
+      SUM(CASE WHEN avg_latency >= 150 OR max_latency >= 200 THEN 1 ELSE 0 END) AS significantSpikeCount
       FROM network_samples WHERE session_id = ?`;
     return this.db.prepare(query).get(sessionId);
   }
@@ -157,6 +161,14 @@ class PingTrailDatabase {
       FROM network_samples WHERE session_id = ?
       ORDER BY recorded_at DESC, id DESC LIMIT ?`;
     return this.db.prepare(query).all(sessionId, limit).reverse();
+  }
+
+  getAllChartData(sessionId) {
+    const query = `SELECT recorded_at AS recordedAt, target_type AS targetType, target,
+      avg_latency AS avgLatency, packet_loss AS packetLoss, jitter,
+      min_latency AS minLatency, max_latency AS maxLatency
+      FROM network_samples WHERE session_id = ? ORDER BY recorded_at, id`;
+    return this.db.prepare(query).all(sessionId);
   }
 
   getLatestSpeedTest(sessionId) {
