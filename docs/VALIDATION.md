@@ -36,9 +36,10 @@ reachability, sustained bandwidth measurements, Windows/macOS runtime behavior,
 long-term disk growth and a physical host reboot were not exercised here. Run the
 operator checks in DEPLOYMENT.md before relying on deployment measurements.
 
-GitHub API requests are blocked by the cloud network policy (CONNECT HTTP 403).
-The required `api.github.com` domain addition was saved to the environment draft;
-saving does not apply/publish it. Native Git read/push permissions are separate from
-GitHub API access. A blocked PR creation should be completed after network access is
-applied, or through GitHub's compare/PR UI. No deployment or merge is authorized by
-these validation results.
+Initial GitHub API probes failed with CONNECT HTTP 403. The required `api.github.com`
+addition was saved with reusable installation/startup instructions in the environment
+configuration draft. A subsequent supported `gh pr create` operation succeeded:
+https://github.com/KCrandall6/PingTrail/pull/5. Native Git push also succeeded. Draft
+persistence and successful current-instance operations do not establish publication or
+fresh-task restoration; review/save and publish the environment through its settings.
+Nothing was merged or deployed automatically.
