@@ -16,15 +16,26 @@ npm test
 npm start
 ```
 
-Default binding remains loopback, monitoring initially waits for Start, and the plain
-browser dashboard works without accounts or tokens. Subsequent desired state persists:
-a user Start resumes after process restart, while Stop remains paused. Set
-`PINGTRAIL_AUTO_START=false` to control the first-run default, not to override an existing
-stored user choice. On an existing database with no desired-state row, that setting
-chooses the initial behavior. An intentional Start after Stop creates a new session;
-routine process/container restarts reuse the previous session. Downtime is an absence
-of measurements, never fabricated success/loss samples. Historical APIs explicitly report
-missing intervals and internal aggregate gaps. One process must own each database.
+Default binding remains loopback, and the plain browser dashboard works without accounts
+or tokens. **Standalone mode starts paused on every application process launch**, regardless
+of whether monitoring was running before shutdown or any saved server preference. Press
+Start to begin monitoring normally in a new session. Closing and reopening the application
+process never resumes standalone monitoring automatically; merely closing a browser tab
+leaves the backend process running. `PINGTRAIL_AUTO_START` does not enable standalone
+auto-start. History and previous sessions remain available.
+
+Only `PINGTRAIL_PROFILE=server` enables durable desired monitoring state and automatic
+restart recovery. In server mode, a running session resumes after restart, and an intentional
+Stop remains paused. `PINGTRAIL_AUTO_START=true` (the server default) or `false` chooses
+the initial state when no saved server preference exists; it does not override a persisted
+user pause or running preference. Standalone Start/Stop actions do not read or overwrite
+the server preference, even when switching profiles against the same database. Do not run
+the two profiles concurrently against one database.
+
+An intentional Start after Stop creates a new session; routine **server-mode** restarts
+reuse the previous session. Downtime is an absence of measurements, never fabricated
+success/loss samples. Historical APIs explicitly report missing intervals and internal
+aggregate gaps. One process must own each database.
 
 For Ubuntu without Docker, use a systemd service running `node src/server.js` with a
 dedicated unprivileged user, `WorkingDirectory` set to the checkout, `Restart=on-failure`,
@@ -119,7 +130,7 @@ about every 15–30 seconds, and fetch history only when needed.
 | `POST /api/connection-test` | Start manual test; HTTP 202; 409 if paused/running; 429 during cooldown |
 | `POST /api/problems` | Optional JSON `{"note":"Brief lag observation"}`; server timestamp and current session; 409 when paused |
 | `POST /api/monitor/start` | Start/resume desired monitoring; repeated requests are safe |
-| `POST /api/monitor/stop` | Intentional durable pause |
+| `POST /api/monitor/stop` | Intentional pause; durable across restarts in server mode |
 | `PUT /api/settings/monitoring-interval` | Numeric JSON `intervalMs`: 2000, 10000, 30000 or 60000 |
 | `GET /api/storage` | Database page bytes, free pages, oldest measurement, retention policy; no filesystem paths |
 | `GET /api/state` | Existing standalone dashboard state and session grade |
@@ -282,5 +293,5 @@ Windows/macOS native commands and actual home-router identity still need platfor
 
 For a disposable automated container check after building `pingtrail:phase4a`, run
 `python3 scripts/docker-smoke.py`. It removes only its own temporary container/volume,
-uses no published port, and does not perform bandwidth tests. See
-[the validation record](VALIDATION.md) for checks actually executed and limitations.
+uses no published port, and does not perform bandwidth tests. Real home-router
+reachability, bandwidth traffic and physical host reboot behavior require operator checks.

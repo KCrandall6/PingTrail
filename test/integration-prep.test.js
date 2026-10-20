@@ -12,6 +12,7 @@ const { retentionBatch, history, DAY, storage } = require("../src/history");
 const { rollingGrade, assess } = require("../src/rolling-grade");
 const { validateTarget, detectDefaultGateway } = require("../src/network");
 const config = {
+  profile: "server",
   monitoringIntervalMs: 10000,
   diagnosticIntervalMs: 2000,
   externalTargets: ["1.1.1.1"],
@@ -121,7 +122,7 @@ test("desired state survives graceful shutdown and crash recovery, while pause r
 
 test("standalone default stays stopped without a persisted preference", async (t) => {
   const { db } = fixture(t);
-  const m = monitor(db, { autoStart: false });
+  const m = monitor(db, { profile: "standalone", autoStart: false });
   await m.initialize();
   assert.equal(m.active, false);
 });
@@ -615,4 +616,90 @@ test("missing ping permissions produce a diagnostic gap rather than invented pac
     /unavailable/,
   );
   await m.shutdown();
+});
+
+test("standalone always launches paused and preserves history through graceful and abrupt restarts", async (t) => {
+  const { db, filename } = fixture(t);
+  const standalone = () =>
+    monitor(db, { profile: "standalone", autoStart: true });
+  let m = standalone();
+  await m.initialize();
+  assert.equal(m.active, false);
+  await m.start();
+  clearTimeout(m.monitorTimer);
+  const firstId = m.session.id;
+  await m.runMonitoringJob();
+  db.insertProblem(firstId, "keep this history");
+  await m.shutdown();
+  m = standalone();
+  await m.initialize();
+  assert.equal(m.active, false);
+  assert.equal(m.monitorTimer, null);
+  assert.equal(db.getSessionSummary(firstId).sampleCount, 2);
+  assert.equal(db.getProblems(firstId)[0].note, "keep this history");
+  assert.equal(db.getDesiredState(), null);
+  await m.start();
+  clearTimeout(m.monitorTimer);
+  const secondId = m.session.id;
+  assert.notEqual(secondId, firstId);
+  // Reopen the database as after an abrupt process exit, without shutdown/stop.
+  db.close();
+  const reopened = new DB(filename);
+  const next = monitor(reopened, { profile: "standalone", autoStart: true });
+  try {
+    await next.initialize();
+    assert.equal(next.active, false);
+    assert.equal(reopened.getSession(secondId).status, "interrupted");
+    assert.equal(reopened.getSessionSummary(firstId).sampleCount, 2);
+  } finally {
+    await next.shutdown();
+    reopened.close();
+  }
+});
+
+test("standalone controls cannot change the server running or paused preference", async (t) => {
+  const { db } = fixture(t);
+  const server = monitor(db);
+  await server.initialize();
+  clearTimeout(server.monitorTimer);
+  const id = server.session.id;
+  await server.shutdown();
+  for (const desired of [true, false]) {
+    db.setDesiredState(desired, id);
+    const before = db.getDesiredState();
+    const local = monitor(db, { profile: "standalone", autoStart: true });
+    await local.initialize();
+    assert.equal(local.active, false);
+    local.stop();
+    await local.start();
+    clearTimeout(local.monitorTimer);
+    local.stop();
+    await local.shutdown();
+    assert.deepEqual(db.getDesiredState(), before);
+    const resumed = monitor(db);
+    await resumed.initialize();
+    clearTimeout(resumed.monitorTimer);
+    assert.equal(resumed.active, desired);
+    if (desired) assert.equal(resumed.session.id, id);
+    await resumed.shutdown();
+  }
+});
+
+test("server auto-start is configurable without overriding durable user intent", async (t) => {
+  const { db } = fixture(t);
+  const first = monitor(db, { autoStart: false });
+  await first.initialize();
+  assert.equal(first.active, false);
+  await first.start();
+  clearTimeout(first.monitorTimer);
+  const id = first.session.id;
+  await first.shutdown();
+  const resumed = monitor(db, { autoStart: false });
+  await resumed.initialize();
+  clearTimeout(resumed.monitorTimer);
+  assert.equal(resumed.session.id, id);
+  resumed.stop();
+  const paused = monitor(db, { autoStart: true });
+  await paused.initialize();
+  assert.equal(paused.active, false);
 });

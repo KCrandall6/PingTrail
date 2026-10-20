@@ -9,7 +9,7 @@ PingTrail is a small, open-source, local-first network monitor for diagnosing in
 ## What PingTrail includes
 
 - Backend monitoring that continues when the browser is closed
-- Durable start/pause intent and session continuity across routine restarts
+- Manual start on every standalone launch; durable start/pause intent and restart continuity in server mode
 - Automatic IPv4 default-gateway detection
 - Five pings each to the router, `1.1.1.1`, and `8.8.8.8` at a selectable 2, 10, 30, or 60-second interval (10 seconds by default)
 - Automatic 2-second diagnostic sampling for about one minute after latency, loss, or jitter events
@@ -21,8 +21,7 @@ PingTrail is a small, open-source, local-first network monitor for diagnosing in
 
 ## Ubuntu, Docker and Sentinel integration
 
-See [deployment, API, grading, retention, backup and verification instructions](docs/DEPLOYMENT.md)
-and the [public-repository security review](docs/SECURITY-AUDIT.md).
+See [deployment, API, grading, retention, backup and verification instructions](docs/DEPLOYMENT.md).
 
 The server profile supports always-on monitoring, durable pause/resume, a compact authenticated
 summary API and bounded historical queries. Docker runs non-root with persistent SQLite and no
@@ -139,7 +138,7 @@ data/pingtrail.sqlite
 
 SQLite write-ahead-log companion files may appear beside it while the app is running. The entire `data/` directory is ignored by Git. To reset local history, stop PingTrail and delete that directory. To back it up, stop PingTrail first and copy the SQLite file.
 
-Monitoring intent is now durable: routine restarts resume a running session, while an intentional Stop remains paused. Standalone first-run behavior still waits for Start. The server deployment profile defaults to automatic monitoring. Downtime remains a gap with no fabricated measurements. See [deployment and API documentation](docs/DEPLOYMENT.md).
+Standalone PingTrail starts paused on every process launch, even if monitoring was running before shutdown. Press Start to begin a new session; closing only the browser does not stop the backend process. In `PINGTRAIL_PROFILE=server` mode, monitoring intent is durable: routine restarts resume a running session, while an intentional Stop remains paused. Server mode defaults to automatic monitoring on first launch, configurable with `PINGTRAIL_AUTO_START`. Downtime remains a gap with no fabricated measurements. See [deployment and API documentation](docs/DEPLOYMENT.md).
 
 ## Configuration
 
@@ -150,6 +149,8 @@ Defaults work without configuration. Advanced users can set these environment va
 | `PORT` | `3000` | Local dashboard port |
 | `PINGTRAIL_HOST` | `127.0.0.1` | Listen address; changing this may expose private data on the LAN |
 | `PINGTRAIL_DB_PATH` | `data/pingtrail.sqlite` | SQLite file path |
+| `PINGTRAIL_PROFILE` | standalone | `server` enables persistent intent and restart recovery; standalone always launches paused |
+| `PINGTRAIL_AUTO_START` | `true` in server mode | Server initial state when no saved intent exists; ignored for standalone startup |
 | `PINGTRAIL_MONITOR_INTERVAL_MS` | `10000` | Initial delay between completed monitoring jobs (supported values: 2000, 10000, 30000, 60000) |
 | `PINGTRAIL_PING_COUNT` | `5` | Pings per target per check |
 | `PINGTRAIL_PING_TIMEOUT_MS` | `5000` | Per-ping timeout |

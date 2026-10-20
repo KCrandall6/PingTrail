@@ -54,6 +54,7 @@ if (serverProfile && !routerTarget)
   throw new Error("Server profile requires an explicit router target.");
 
 const result = {
+  profile: serverProfile ? "server" : "standalone",
   apiToken,
   autoStart: boolean("PINGTRAIL_AUTO_START", serverProfile),
   automaticSpeedTests: boolean("PINGTRAIL_AUTO_SPEED_TESTS", true),

@@ -45,6 +45,9 @@ class MonitorService {
   }
 
   async initialize() {
+    // Standalone launches always wait for an explicit Start. Leave the server
+    // preference untouched when both profiles use the same history database.
+    if (this.config.profile !== "server") return;
     const desired = this.database.getDesiredState?.();
     if (desired ? desired.desired : this.config.autoStart) {
       const old =
@@ -63,7 +66,8 @@ class MonitorService {
   async start() {
     if (this.active) return { started: false, session: this.session };
     this.session = this.database.createSession();
-    this.database.setDesiredState?.(true, this.session.id);
+    if (this.config.profile === "server")
+      this.database.setDesiredState?.(true, this.session.id);
     this.log.info("Monitoring started", { sessionId: this.session.id });
     this.scheduleMonitor(0);
     this.scheduleSpeedTest(this.config.speedTestIntervalMs);
@@ -71,7 +75,7 @@ class MonitorService {
   }
 
   stop({ preserveDesired = false } = {}) {
-    if (!preserveDesired)
+    if (this.config.profile === "server" && !preserveDesired)
       this.database.setDesiredState?.(false, this.session?.id || null);
     if (!this.active) return { stopped: false, session: null };
     clearTimeout(this.monitorTimer);
