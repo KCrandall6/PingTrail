@@ -1,19 +1,19 @@
 FROM node:24-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package*.json ./
+# Keep Debian's default HTTP sources: APT verifies signed metadata and package hashes
+# while installing the CA store, without requiring pre-existing HTTPS trust.
 RUN --mount=type=secret,id=build_ca,required=false,mode=0444 \
-    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
-    && if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; export npm_config_cafile=/run/secrets/build_ca; export APT_CA_OPTION="-o Acquire::https::CaInfo=/run/secrets/build_ca"; fi \
+    if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; export npm_config_cafile=/run/secrets/build_ca; export APT_CA_OPTION="-o Acquire::https::CaInfo=/run/secrets/build_ca"; fi \
     && apt-get $APT_CA_OPTION update \
-    && apt-get $APT_CA_OPTION install -y --no-install-recommends python3 make g++ \
+    && apt-get $APT_CA_OPTION install -y --no-install-recommends python3 make g++ ca-certificates \
     && npm ci --omit=dev --cache /tmp/npm-cache \
     && rm -rf /tmp/npm-cache
 
 FROM node:24-bookworm-slim
 # Replace ping to drop its NET_RAW file capability; datagram ICMP needs no added capability.
 RUN --mount=type=secret,id=build_ca,required=false,mode=0444 \
-    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
-    && if [ -f /run/secrets/build_ca ]; then export APT_CA_OPTION="-o Acquire::https::CaInfo=/run/secrets/build_ca"; fi \
+    if [ -f /run/secrets/build_ca ]; then export APT_CA_OPTION="-o Acquire::https::CaInfo=/run/secrets/build_ca"; fi \
     && apt-get $APT_CA_OPTION update && apt-get $APT_CA_OPTION install -y --no-install-recommends iputils-ping iproute2 ca-certificates \
     && cp /usr/bin/ping /usr/bin/ping-unprivileged && mv /usr/bin/ping-unprivileged /usr/bin/ping \
     && rm -rf /var/lib/apt/lists/* \
