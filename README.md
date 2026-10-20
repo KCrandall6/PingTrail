@@ -9,7 +9,7 @@ PingTrail is a small, open-source, local-first network monitor for diagnosing in
 ## What PingTrail includes
 
 - Backend monitoring that continues when the browser is closed
-- A fresh retained session each time monitoring starts
+- Durable start/pause intent and session continuity across routine restarts
 - Automatic IPv4 default-gateway detection
 - Five pings each to the router, `1.1.1.1`, and `8.8.8.8` at a selectable 2, 10, 30, or 60-second interval (10 seconds by default)
 - Automatic 2-second diagnostic sampling for about one minute after latency, loss, or jitter events
@@ -18,6 +18,22 @@ PingTrail is a small, open-source, local-first network monitor for diagnosing in
 - Optional timestamped “Mark Problem” notes, shown as red dashed lines on the chart
 - A manual or hourly comprehensive connection test for throughput and latency under load
 - Local-only HTTP binding and no accounts, telemetry, or cloud database
+
+## Ubuntu, Docker and Sentinel integration
+
+See [deployment, API, grading, retention, backup and verification instructions](docs/DEPLOYMENT.md)
+and the [public-repository security review](docs/SECURITY-AUDIT.md).
+
+The server profile supports always-on monitoring, durable pause/resume, a compact authenticated
+summary API and bounded historical queries. Docker runs non-root with persistent SQLite and no
+published port; a trusted backend supplies authentication over a private network. Configure the
+actual router IPv4 target explicitly because Docker's gateway is usually a virtual bridge.
+Measurements originate from the monitoring server, not another device such as a phone or Xbox.
+PingTrail remains standalone and has no dependency on Sentinel Home.
+
+Default retention is seven days raw, then one-minute summaries through day 30, hourly summaries
+through day 365, and automatic expiry. Notes default to 730 days and connection tests to 365 days.
+Back up existing databases before upgrade and review retention if older raw records must be kept.
 
 ## Windows quick start
 
@@ -32,7 +48,7 @@ PingTrail is a small, open-source, local-first network monitor for diagnosing in
 Open **PowerShell** or **Command Prompt** in the PingTrail folder:
 
 ```powershell
-npm install
+npm ci
 npm start
 ```
 
@@ -50,7 +66,7 @@ Run the automated tests with:
 npm test
 ```
 
-`better-sqlite3` normally installs a prebuilt Windows binary. If npm has to compile it instead, install the Visual Studio Build Tools with the “Desktop development with C++” workload and retry `npm install`.
+`better-sqlite3` normally installs a prebuilt Windows binary. If npm has to compile it instead, install the Visual Studio Build Tools with the “Desktop development with C++” workload and retry `npm ci`.
 
 ## What PingTrail measures
 
@@ -123,7 +139,7 @@ data/pingtrail.sqlite
 
 SQLite write-ahead-log companion files may appear beside it while the app is running. The entire `data/` directory is ignored by Git. To reset local history, stop PingTrail and delete that directory. To back it up, stop PingTrail first and copy the SQLite file.
 
-If the Node process ends unexpectedly, an active database session is marked `interrupted` at the next startup. PingTrail does not automatically resume monitoring after a process restart. Reopening only the browser preserves and displays the backend's current state.
+Monitoring intent is now durable: routine restarts resume a running session, while an intentional Stop remains paused. Standalone first-run behavior still waits for Start. The server deployment profile defaults to automatic monitoring. Downtime remains a gap with no fabricated measurements. See [deployment and API documentation](docs/DEPLOYMENT.md).
 
 ## Configuration
 

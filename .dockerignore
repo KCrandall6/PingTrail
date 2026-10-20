@@ -1,0 +1,14 @@
+.git
+node_modules
+data
+.env
+.env.*
+*.sqlite*
+*.db*
+*.log
+*.bak
+*.backup
+backups
+config.local.json
+coverage
+test
