@@ -1,21 +1,28 @@
-'use strict';
+"use strict";
 
-const { performance } = require('node:perf_hooks');
-const network = require('./network');
+const { performance } = require("node:perf_hooks");
+const network = require("./network");
 
 function summarizeLatency(measurements) {
   const times = measurements.flatMap((measurement) => measurement.times || []);
-  const packetsSent = measurements.reduce((sum, item) => sum + item.packetsSent, 0);
+  const packetsSent = measurements.reduce(
+    (sum, item) => sum + item.packetsSent,
+    0,
+  );
   const packetsReceived = times.length;
   return {
     packetsSent,
     packetsReceived,
-    packetLoss: packetsSent ? ((packetsSent - packetsReceived) / packetsSent) * 100 : null,
+    packetLoss: packetsSent
+      ? ((packetsSent - packetsReceived) / packetsSent) * 100
+      : null,
     minLatency: times.length ? Math.min(...times) : null,
-    avgLatency: times.length ? times.reduce((sum, value) => sum + value, 0) / times.length : null,
+    avgLatency: times.length
+      ? times.reduce((sum, value) => sum + value, 0) / times.length
+      : null,
     maxLatency: times.length ? Math.max(...times) : null,
     jitter: network.calculateJitter(times),
-    times
+    times,
   };
 }
 
@@ -25,9 +32,24 @@ function latencyIncrease(loaded, baseline) {
 
 async function transfer(url, options, fetchImpl) {
   const started = performance.now();
-  const response = await fetchImpl(url, { ...options, signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) throw new Error(`Connection-test server returned HTTP ${response.status}`);
-  await response.arrayBuffer();
+  const response = await fetchImpl(url, {
+    ...options,
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok)
+    throw new Error(`Connection-test server returned HTTP ${response.status}`);
+  // Stream download bodies instead of retaining the entire response in memory.
+  if (response.body) {
+    let bytes = 0;
+    for await (const chunk of response.body) {
+      bytes += chunk.length;
+      if (bytes > 100_000_000)
+        throw new Error("Connection-test response exceeded the safety limit");
+    }
+  } else {
+    await response.arrayBuffer();
+  }
   return (performance.now() - started) / 1_000;
 }
 
@@ -35,7 +57,15 @@ async function measureLatency(target, count, pingOptions, pingImpl) {
   return pingImpl(target, { count, ...pingOptions });
 }
 
-async function runLoadedPhase({ direction, target, bytes, minimumDurationMs, fetchImpl, pingImpl, pingOptions }) {
+async function runLoadedPhase({
+  direction,
+  target,
+  bytes,
+  minimumDurationMs,
+  fetchImpl,
+  pingImpl,
+  pingOptions,
+}) {
   let loading = true;
   const measurements = [];
   let transferred = 0;
@@ -43,7 +73,16 @@ async function runLoadedPhase({ direction, target, bytes, minimumDurationMs, fet
 
   const latencyTask = (async () => {
     while (loading || measurements.length === 0) {
-      measurements.push(await measureLatency(target, 1, pingOptions, pingImpl));
+      const measurement = await measureLatency(
+        target,
+        1,
+        pingOptions,
+        pingImpl,
+      );
+      // Keep memory bounded even for unexpectedly fast or failing ping utilities.
+      measurements.push(measurement);
+      if (measurements.length > 2048) measurements.shift();
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   })();
 
@@ -51,19 +90,26 @@ async function runLoadedPhase({ direction, target, bytes, minimumDurationMs, fet
   try {
     const phaseStarted = performance.now();
     do {
-      const isDownload = direction === 'download';
+      const isDownload = direction === "download";
       const seconds = await transfer(
-        isDownload ? `https://speed.cloudflare.com/__down?bytes=${bytes}` : 'https://speed.cloudflare.com/__up',
-        isDownload ? {} : {
-          method: 'POST',
-          headers: { 'content-type': 'application/octet-stream' },
-          body: Buffer.alloc(bytes)
-        },
-        fetchImpl
+        isDownload
+          ? `https://speed.cloudflare.com/__down?bytes=${bytes}`
+          : "https://speed.cloudflare.com/__up",
+        isDownload
+          ? {}
+          : {
+              method: "POST",
+              headers: { "content-type": "application/octet-stream" },
+              body: Buffer.alloc(bytes),
+            },
+        fetchImpl,
       );
       transferred += bytes;
       transferSeconds += seconds;
-    } while (performance.now() - phaseStarted < minimumDurationMs);
+    } while (
+      performance.now() - phaseStarted <
+      Math.min(minimumDurationMs, 60_000)
+    );
   } catch (error) {
     transferError = error;
   } finally {
@@ -73,35 +119,56 @@ async function runLoadedPhase({ direction, target, bytes, minimumDurationMs, fet
 
   const latency = summarizeLatency(measurements);
   return {
-    mbps: transferError || !transferSeconds ? null : (transferred * 8) / transferSeconds / 1_000_000,
+    mbps:
+      transferError || !transferSeconds
+        ? null
+        : (transferred * 8) / transferSeconds / 1_000_000,
     latency,
-    error: transferError?.message || null
+    error: transferError?.message || null,
   };
 }
 
 async function runConnectionTest(options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const pingImpl = options.pingImpl || network.pingTarget;
-  const target = options.target || '1.1.1.1';
+  const target = options.target || "1.1.1.1";
   const pingOptions = { timeoutMs: options.pingTimeoutMs || 2_000 };
   const onPhase = options.onPhase || (() => {});
 
-  onPhase('baseline');
-  const baseline = await measureLatency(target, options.baselinePingCount || 8, pingOptions, pingImpl);
+  onPhase("baseline");
+  const baseline = await measureLatency(
+    target,
+    options.baselinePingCount || 8,
+    pingOptions,
+    pingImpl,
+  );
 
-  onPhase('download');
+  onPhase("download");
   const download = await runLoadedPhase({
-    direction: 'download', target, bytes: options.downloadBytes || 25_000_000,
-    minimumDurationMs: options.minimumLoadDurationMs || 8_000, fetchImpl, pingImpl, pingOptions
+    direction: "download",
+    target,
+    bytes: options.downloadBytes || 25_000_000,
+    minimumDurationMs: options.minimumLoadDurationMs || 8_000,
+    fetchImpl,
+    pingImpl,
+    pingOptions,
   });
 
-  onPhase('upload');
+  onPhase("upload");
   const upload = await runLoadedPhase({
-    direction: 'upload', target, bytes: options.uploadBytes || 10_000_000,
-    minimumDurationMs: options.minimumLoadDurationMs || 8_000, fetchImpl, pingImpl, pingOptions
+    direction: "upload",
+    target,
+    bytes: options.uploadBytes || 10_000_000,
+    minimumDurationMs: options.minimumLoadDurationMs || 8_000,
+    fetchImpl,
+    pingImpl,
+    pingOptions,
   });
 
-  const errors = [download.error && `Download: ${download.error}`, upload.error && `Upload: ${upload.error}`].filter(Boolean);
+  const errors = [
+    download.error && `Download: ${download.error}`,
+    upload.error && `Upload: ${upload.error}`,
+  ].filter(Boolean);
   return {
     target,
     unloadedLatency: baseline.avgLatency,
@@ -113,15 +180,27 @@ async function runConnectionTest(options = {}) {
     downloadLoadedLatency: download.latency.avgLatency,
     downloadLoadedJitter: download.latency.jitter,
     downloadLoadedPacketLoss: download.latency.packetLoss,
-    downloadLatencyIncrease: latencyIncrease(download.latency.avgLatency, baseline.avgLatency),
+    downloadLatencyIncrease: latencyIncrease(
+      download.latency.avgLatency,
+      baseline.avgLatency,
+    ),
     uploadMbps: upload.mbps,
     uploadLoadedLatency: upload.latency.avgLatency,
     uploadLoadedJitter: upload.latency.jitter,
     uploadLoadedPacketLoss: upload.latency.packetLoss,
-    uploadLatencyIncrease: latencyIncrease(upload.latency.avgLatency, baseline.avgLatency),
-    status: errors.length ? 'partial' : 'complete',
-    error: errors.join('; ') || null
+    uploadLatencyIncrease: latencyIncrease(
+      upload.latency.avgLatency,
+      baseline.avgLatency,
+    ),
+    status: errors.length ? "partial" : "complete",
+    error: errors.join("; ") || null,
   };
 }
 
-module.exports = { latencyIncrease, runConnectionTest, runLoadedPhase, summarizeLatency, transfer };
+module.exports = {
+  latencyIncrease,
+  runConnectionTest,
+  runLoadedPhase,
+  summarizeLatency,
+  transfer,
+};

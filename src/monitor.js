@@ -1,15 +1,23 @@
-'use strict';
+"use strict";
 
-const crypto = require('node:crypto');
-const logger = require('./logger');
-const network = require('./network');
-const speedTest = require('./speed-test');
-const { gradeSession } = require('./session-quality');
+const crypto = require("node:crypto");
+const logger = require("./logger");
+const network = require("./network");
+const speedTest = require("./speed-test");
+const { gradeSession } = require("./session-quality");
 
-const ALLOWED_MONITORING_INTERVALS = Object.freeze([2_000, 10_000, 30_000, 60_000]);
+const ALLOWED_MONITORING_INTERVALS = Object.freeze([
+  2_000, 10_000, 30_000, 60_000,
+]);
 
 class MonitorService {
-  constructor({ database, config, networkService = network, speedTestService = speedTest, log = logger }) {
+  constructor({
+    database,
+    config,
+    networkService = network,
+    speedTestService = speedTest,
+    log = logger,
+  }) {
     this.database = database;
     this.config = config;
     this.network = networkService;
@@ -23,7 +31,10 @@ class MonitorService {
     this.speedTestRunning = false;
     this.connectionTestPhase = null;
     this.gateway = null;
-    this.selectedMonitoringIntervalMs = ALLOWED_MONITORING_INTERVALS.includes(config.monitoringIntervalMs)
+    this.lastMeasurementError = null;
+    this.selectedMonitoringIntervalMs = ALLOWED_MONITORING_INTERVALS.includes(
+      config.monitoringIntervalMs,
+    )
       ? config.monitoringIntervalMs
       : 10_000;
     this.diagnosticUntil = null;
@@ -33,16 +44,39 @@ class MonitorService {
     return Boolean(this.session);
   }
 
+  async initialize() {
+    // Standalone launches always wait for an explicit Start. Leave the server
+    // preference untouched when both profiles use the same history database.
+    if (this.config.profile !== "server") return;
+    const desired = this.database.getDesiredState?.();
+    if (desired ? desired.desired : this.config.autoStart) {
+      const old =
+        desired?.sessionId && this.database.getSession(desired.sessionId);
+      if (old) this.session = this.database.resumeSession(old.id);
+      if (!this.session) return this.start();
+      this.scheduleMonitor(0);
+      const latest = this.database.getLatestSpeedTest(this.session.id);
+      const since = Date.parse(latest?.recordedAt || this.session.startedAt);
+      this.scheduleSpeedTest(
+        Math.max(0, this.config.speedTestIntervalMs - (Date.now() - since)),
+      );
+    }
+  }
+
   async start() {
     if (this.active) return { started: false, session: this.session };
     this.session = this.database.createSession();
-    this.log.info('Monitoring started', { sessionId: this.session.id });
+    if (this.config.profile === "server")
+      this.database.setDesiredState?.(true, this.session.id);
+    this.log.info("Monitoring started", { sessionId: this.session.id });
     this.scheduleMonitor(0);
     this.scheduleSpeedTest(this.config.speedTestIntervalMs);
     return { started: true, session: this.session };
   }
 
-  stop() {
+  stop({ preserveDesired = false } = {}) {
+    if (this.config.profile === "server" && !preserveDesired)
+      this.database.setDesiredState?.(false, this.session?.id || null);
     if (!this.active) return { stopped: false, session: null };
     clearTimeout(this.monitorTimer);
     this.monitorTimer = null;
@@ -51,8 +85,8 @@ class MonitorService {
     this.speedTimer = null;
     this.diagnosticUntil = null;
     const endedAt = this.database.stopSession(this.session.id);
-    const session = { ...this.session, endedAt, status: 'stopped' };
-    this.log.info('Monitoring stopped', { sessionId: session.id });
+    const session = { ...this.session, endedAt, status: "stopped" };
+    this.log.info("Monitoring stopped", { sessionId: session.id });
     this.session = null;
     return { stopped: true, session };
   }
@@ -71,9 +105,11 @@ class MonitorService {
   }
 
   get diagnosticSamplingActive() {
-    return this.selectedMonitoringIntervalMs !== this.config.diagnosticIntervalMs
-      && this.diagnosticUntil != null
-      && this.diagnosticUntil > Date.now();
+    return (
+      this.selectedMonitoringIntervalMs !== this.config.diagnosticIntervalMs &&
+      this.diagnosticUntil != null &&
+      this.diagnosticUntil > Date.now()
+    );
   }
 
   getEffectiveMonitoringIntervalMs() {
@@ -85,7 +121,9 @@ class MonitorService {
   setMonitoringInterval(intervalMs) {
     const parsed = Number(intervalMs);
     if (!ALLOWED_MONITORING_INTERVALS.includes(parsed)) {
-      throw new RangeError('Monitoring interval must be 2, 10, 30, or 60 seconds.');
+      throw new RangeError(
+        "Monitoring interval must be 2, 10, 30, or 60 seconds.",
+      );
     }
     this.selectedMonitoringIntervalMs = parsed;
     this.diagnosticUntil = null;
@@ -98,19 +136,25 @@ class MonitorService {
       selectedIntervalMs: this.selectedMonitoringIntervalMs,
       effectiveIntervalMs: this.getEffectiveMonitoringIntervalMs(),
       diagnosticSamplingActive: this.diagnosticSamplingActive,
-      diagnosticUntil: this.diagnosticSamplingActive ? new Date(this.diagnosticUntil).toISOString() : null,
-      allowedIntervalsMs: ALLOWED_MONITORING_INTERVALS
+      diagnosticUntil: this.diagnosticSamplingActive
+        ? new Date(this.diagnosticUntil).toISOString()
+        : null,
+      allowedIntervalsMs: ALLOWED_MONITORING_INTERVALS,
     };
   }
 
   shouldUseDiagnosticSampling(results) {
-    return results.some((sample) => sample.packetLoss > 0
-      || sample.avgLatency >= this.config.diagnosticLatencyThresholdMs
-      || sample.jitter >= this.config.diagnosticJitterThresholdMs);
+    return results.some(
+      (sample) =>
+        sample.packetLoss > 0 ||
+        sample.avgLatency >= this.config.diagnosticLatencyThresholdMs ||
+        sample.jitter >= this.config.diagnosticJitterThresholdMs,
+    );
   }
 
   activateDiagnosticSampling(results) {
-    if (this.selectedMonitoringIntervalMs === this.config.diagnosticIntervalMs) return;
+    if (this.selectedMonitoringIntervalMs === this.config.diagnosticIntervalMs)
+      return;
     if (this.shouldUseDiagnosticSampling(results)) {
       this.diagnosticUntil = Date.now() + this.config.diagnosticDurationMs;
     }
@@ -122,53 +166,62 @@ class MonitorService {
     const sessionId = this.session.id;
     try {
       try {
-        this.gateway = await this.network.detectDefaultGateway();
+        this.gateway =
+          this.config.routerTarget ||
+          (await this.network.detectDefaultGateway());
       } catch (error) {
-        this.log.warn('Could not detect the default gateway', { message: error.message });
+        this.log.warn("Could not detect the default gateway", {
+          message: error.message,
+        });
       }
 
       const targets = [];
-      if (this.gateway) targets.push({ target: this.gateway, targetType: 'router' });
+      if (this.gateway)
+        targets.push({ target: this.gateway, targetType: "router" });
       for (const target of this.config.externalTargets) {
-        targets.push({ target, targetType: 'external' });
+        targets.push({ target, targetType: "external" });
       }
 
       const recordedAt = new Date().toISOString();
       const checkId = crypto.randomUUID();
-      const results = await Promise.all(targets.map(async ({ target, targetType }) => {
-        try {
-          const measurement = await this.network.pingTarget(target, {
-            count: this.config.pingCount,
-            timeoutMs: this.config.pingTimeoutMs
-          });
-          return { sessionId, checkId, recordedAt, target, targetType, ...measurement };
-        } catch (error) {
-          this.log.warn('Ping measurement failed', { target, message: error.message });
-          return {
-            sessionId,
-            checkId,
-            recordedAt,
-            target,
-            targetType,
-            packetsSent: this.config.pingCount,
-            packetsReceived: 0,
-            packetLoss: 100,
-            minLatency: null,
-            avgLatency: null,
-            maxLatency: null,
-            jitter: 0
-          };
-        }
-      }));
+      this.lastMeasurementError = null;
+      const results = (
+        await Promise.all(
+          targets.map(async ({ target, targetType }) => {
+            try {
+              const measurement = await this.network.pingTarget(target, {
+                count: this.config.pingCount,
+                timeoutMs: this.config.pingTimeoutMs,
+              });
+              return {
+                sessionId,
+                checkId,
+                recordedAt,
+                target,
+                targetType,
+                ...measurement,
+              };
+            } catch (error) {
+              this.log.warn("Ping measurement failed", {
+                target,
+                message: error.message,
+              });
+              this.lastMeasurementError =
+                "Measurement unavailable; verify ping utility and ICMP permissions.";
+              return null;
+            }
+          }),
+        )
+      ).filter(Boolean);
 
       if (results.length && this.session?.id === sessionId) {
         this.database.insertSamples(results);
         this.activateDiagnosticSampling(results);
-        this.log.info('Network check stored', { sessionId, samples: results.length });
+        // Keep continuous monitoring logs bounded; measurements live in SQLite.
       }
       return true;
     } catch (error) {
-      this.log.error('Monitoring job failed safely', error);
+      this.log.error("Monitoring job failed safely", error);
       return false;
     } finally {
       this.monitorJobRunning = false;
@@ -177,21 +230,23 @@ class MonitorService {
 
   scheduleSpeedTest(delay) {
     clearTimeout(this.speedTimer);
-    if (!this.active) return;
+    if (!this.active || this.config.automaticSpeedTests === false) return;
     this.speedTimer = setTimeout(async () => {
-      await this.runConnectionTest('automatic');
+      await this.runConnectionTest("automatic");
       this.scheduleSpeedTest(this.config.speedTestIntervalMs);
     }, delay);
     this.speedTimer.unref?.();
   }
 
-  async runConnectionTest(triggerType = 'manual') {
+  async runConnectionTest(triggerType = "manual") {
     if (!this.active || this.speedTestRunning) return false;
     this.speedTestRunning = true;
     const sessionId = this.session.id;
     const recordedAt = new Date().toISOString();
     try {
-      const runner = this.speedTestService.runConnectionTest || this.speedTestService.runSpeedTest;
+      const runner =
+        this.speedTestService.runConnectionTest ||
+        this.speedTestService.runSpeedTest;
       const result = await runner({
         downloadBytes: this.config.speedTestDownloadBytes,
         uploadBytes: this.config.speedTestUploadBytes,
@@ -199,24 +254,47 @@ class MonitorService {
         baselinePingCount: this.config.connectionTestBaselinePings,
         pingTimeoutMs: this.config.pingTimeoutMs,
         target: this.config.externalTargets[0],
-        onPhase: (phase) => { this.connectionTestPhase = phase; }
+        onPhase: (phase) => {
+          this.connectionTestPhase = phase;
+        },
       });
       if (this.session?.id === sessionId) {
-        this.database.insertSpeedTest({ sessionId, recordedAt, triggerType, ...result });
-        this.log.info('Connection test stored', { sessionId, triggerType });
+        this.database.insertSpeedTest({
+          sessionId,
+          recordedAt,
+          triggerType,
+          ...result,
+        });
+        this.log.info("Connection test stored", { sessionId, triggerType });
       }
       return true;
     } catch (error) {
-      this.log.warn('Connection test failed safely', { message: error.message });
+      this.log.warn("Connection test failed safely", {
+        message: error.message,
+      });
       if (this.session?.id === sessionId) {
         this.database.insertSpeedTest({
-          sessionId, recordedAt, triggerType, target: this.config.externalTargets[0], status: 'failed',
-          unloadedLatency: null, unloadedMinLatency: null, unloadedMaxLatency: null,
-          unloadedJitter: null, unloadedPacketLoss: null, downloadMbps: null,
-          downloadLoadedLatency: null, downloadLoadedJitter: null, downloadLoadedPacketLoss: null,
-          downloadLatencyIncrease: null, uploadMbps: null, uploadLoadedLatency: null,
-          uploadLoadedJitter: null, uploadLoadedPacketLoss: null, uploadLatencyIncrease: null,
-          error: error.message.slice(0, 500)
+          sessionId,
+          recordedAt,
+          triggerType,
+          target: this.config.externalTargets[0],
+          status: "failed",
+          unloadedLatency: null,
+          unloadedMinLatency: null,
+          unloadedMaxLatency: null,
+          unloadedJitter: null,
+          unloadedPacketLoss: null,
+          downloadMbps: null,
+          downloadLoadedLatency: null,
+          downloadLoadedJitter: null,
+          downloadLoadedPacketLoss: null,
+          downloadLatencyIncrease: null,
+          uploadMbps: null,
+          uploadLoadedLatency: null,
+          uploadLoadedJitter: null,
+          uploadLoadedPacketLoss: null,
+          uploadLatencyIncrease: null,
+          error: error.message.slice(0, 500),
         });
       }
       return false;
@@ -227,32 +305,40 @@ class MonitorService {
   }
 
   runSpeedTestJob() {
-    return this.runConnectionTest('automatic');
+    return this.runConnectionTest("automatic");
   }
 
   getState() {
     const state = {
       active: this.active,
       gateway: this.gateway,
+      measurementError: this.lastMeasurementError,
       jobRunning: this.monitorJobRunning,
       speedTestRunning: this.speedTestRunning,
       connectionTestPhase: this.connectionTestPhase,
       monitoring: this.getMonitoringSettings(),
-      session: null
+      session: null,
     };
     if (!this.session) return state;
     state.session = this.database.getSession(this.session.id);
     state.latestCheck = this.database.getLatestCheck(this.session.id);
     state.summary = this.database.getSessionSummary(this.session.id);
     state.quality = gradeSession({ ...state.session, summary: state.summary });
-    state.chart = this.database.getChartData(this.session.id, this.config.chartPointLimit);
+    state.chart = this.database.getChartData(
+      this.session.id,
+      this.config.chartPointLimit,
+    );
     state.latestSpeedTest = this.database.getLatestSpeedTest(this.session.id);
     state.problems = this.database.getProblems(this.session.id);
     return state;
   }
 
-  shutdown() {
-    if (this.active) this.stop();
+  async shutdown() {
+    if (this.active) this.stop({ preserveDesired: true });
+    // In-flight jobs discard results after detaching the session. Keep SQLite open until they finish.
+    while (this.monitorJobRunning || this.speedTestRunning) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
 }
 

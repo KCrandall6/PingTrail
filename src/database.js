@@ -1,16 +1,20 @@
-'use strict';
+"use strict";
 
-const fs = require('node:fs');
-const path = require('node:path');
-const Database = require('better-sqlite3');
+const fs = require("node:fs");
+const path = require("node:path");
+const Database = require("better-sqlite3");
 
 class PingTrailDatabase {
   constructor(filename) {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     this.db = new Database(filename);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
-    this.migrate();
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("foreign_keys = ON");
+    this.db.pragma("busy_timeout = 5000");
+    this.db.transaction(() => {
+      this.migrate();
+      require("./history").migrate(this.db);
+    })();
     this.recoverInterruptedSessions();
   }
 
@@ -57,35 +61,91 @@ class PingTrailDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_problems_session_time ON problem_markers(session_id, recorded_at);
     `);
-    const speedColumns = new Set(this.db.prepare('PRAGMA table_info(speed_tests)').all().map((column) => column.name));
+    const speedColumns = new Set(
+      this.db
+        .prepare("PRAGMA table_info(speed_tests)")
+        .all()
+        .map((column) => column.name),
+    );
     const additions = {
-      trigger_type: "TEXT NOT NULL DEFAULT 'automatic' CHECK(trigger_type IN ('manual', 'automatic'))",
-      target: 'TEXT', status: "TEXT NOT NULL DEFAULT 'complete'", unloaded_latency: 'REAL',
-      unloaded_min_latency: 'REAL', unloaded_max_latency: 'REAL', unloaded_jitter: 'REAL',
-      unloaded_packet_loss: 'REAL', download_loaded_latency: 'REAL', download_loaded_jitter: 'REAL',
-      download_loaded_packet_loss: 'REAL', download_latency_increase: 'REAL',
-      upload_loaded_latency: 'REAL', upload_loaded_jitter: 'REAL', upload_loaded_packet_loss: 'REAL',
-      upload_latency_increase: 'REAL'
+      trigger_type:
+        "TEXT NOT NULL DEFAULT 'automatic' CHECK(trigger_type IN ('manual', 'automatic'))",
+      target: "TEXT",
+      status: "TEXT NOT NULL DEFAULT 'complete'",
+      unloaded_latency: "REAL",
+      unloaded_min_latency: "REAL",
+      unloaded_max_latency: "REAL",
+      unloaded_jitter: "REAL",
+      unloaded_packet_loss: "REAL",
+      download_loaded_latency: "REAL",
+      download_loaded_jitter: "REAL",
+      download_loaded_packet_loss: "REAL",
+      download_latency_increase: "REAL",
+      upload_loaded_latency: "REAL",
+      upload_loaded_jitter: "REAL",
+      upload_loaded_packet_loss: "REAL",
+      upload_latency_increase: "REAL",
     };
     for (const [name, definition] of Object.entries(additions)) {
-      if (!speedColumns.has(name)) this.db.exec(`ALTER TABLE speed_tests ADD COLUMN ${name} ${definition}`);
+      if (!speedColumns.has(name))
+        this.db.exec(
+          `ALTER TABLE speed_tests ADD COLUMN ${name} ${definition}`,
+        );
     }
   }
 
   recoverInterruptedSessions() {
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE sessions SET status = 'interrupted', ended_at = ? WHERE status = 'active'").run(now);
+    this.db
+      .prepare(
+        "UPDATE sessions SET status = 'interrupted', ended_at = ? WHERE status = 'active'",
+      )
+      .run(now);
+  }
+
+  getDesiredState() {
+    return (
+      this.db
+        .prepare(
+          "SELECT desired, session_id AS sessionId FROM monitor_preferences WHERE id=1",
+        )
+        .get() || null
+    );
+  }
+
+  setDesiredState(desired, sessionId) {
+    this.db
+      .prepare(
+        "INSERT INTO monitor_preferences VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET desired=excluded.desired,session_id=excluded.session_id",
+      )
+      .run(desired ? 1 : 0, sessionId);
+  }
+
+  resumeSession(id) {
+    this.db
+      .prepare("UPDATE sessions SET status='active',ended_at=NULL WHERE id=?")
+      .run(id);
+    return this.getSession(id);
   }
 
   createSession() {
     const startedAt = new Date().toISOString();
-    const result = this.db.prepare("INSERT INTO sessions (started_at, status) VALUES (?, 'active')").run(startedAt);
-    return { id: Number(result.lastInsertRowid), startedAt, endedAt: null, status: 'active' };
+    const result = this.db
+      .prepare("INSERT INTO sessions (started_at, status) VALUES (?, 'active')")
+      .run(startedAt);
+    return {
+      id: Number(result.lastInsertRowid),
+      startedAt,
+      endedAt: null,
+      status: "active",
+    };
   }
 
-  stopSession(id, status = 'stopped') {
+  stopSession(id, status = "stopped") {
     const endedAt = new Date().toISOString();
-    const statement = this.db.prepare("UPDATE sessions SET ended_at = ?, status = ? WHERE id = ? AND status = 'active'");
+    const statement = this.db.prepare(
+      "UPDATE sessions SET ended_at = ?, status = ? WHERE id = ? AND status = 'active'",
+    );
     statement.run(endedAt, status, id);
     return endedAt;
   }
@@ -119,13 +179,21 @@ class PingTrailDatabase {
 
   insertProblem(sessionId, note) {
     const recordedAt = new Date().toISOString();
-    const statement = this.db.prepare('INSERT INTO problem_markers (session_id, recorded_at, note) VALUES (?, ?, ?)');
+    const statement = this.db.prepare(
+      "INSERT INTO problem_markers (session_id, recorded_at, note) VALUES (?, ?, ?)",
+    );
     const result = statement.run(sessionId, recordedAt, note || null);
-    return { id: Number(result.lastInsertRowid), sessionId, recordedAt, note: note || null };
+    return {
+      id: Number(result.lastInsertRowid),
+      sessionId,
+      recordedAt,
+      note: note || null,
+    };
   }
 
   getSession(id) {
-    const query = 'SELECT id, started_at AS startedAt, ended_at AS endedAt, status FROM sessions WHERE id = ?';
+    const query =
+      "SELECT id, started_at AS startedAt, ended_at AS endedAt, status FROM sessions WHERE id = ?";
     return this.db.prepare(query).get(id) || null;
   }
 
@@ -140,18 +208,14 @@ class PingTrailDatabase {
   }
 
   getSessionSummary(sessionId) {
-    const query = `SELECT COUNT(*) AS sampleCount,
-      MIN(min_latency) AS minimumLatency,
-      AVG(CASE WHEN target_type = 'router' THEN avg_latency END) AS averageRouterLatency,
-      AVG(CASE WHEN target_type = 'external' THEN avg_latency END) AS averageInternetLatency,
-      MAX(max_latency) AS maximumLatency,
-      AVG(jitter) AS averageJitter,
-      SUM(CASE WHEN packet_loss > 0 THEN 1 ELSE 0 END) AS packetLossEvents,
-      MAX(packet_loss) AS worstPacketLoss,
-      CASE WHEN SUM(packets_sent) > 0
-        THEN 100.0 * SUM(packets_sent - packets_received) / SUM(packets_sent) END AS packetLossPercent,
-      SUM(CASE WHEN avg_latency >= 150 OR max_latency >= 200 THEN 1 ELSE 0 END) AS significantSpikeCount
-      FROM network_samples WHERE session_id = ?`;
+    const query = `SELECT SUM(samples) AS sampleCount, MIN(minimum) AS minimumLatency,
+      SUM(CASE WHEN target_type='router' THEN latency_sum END) / NULLIF(SUM(CASE WHEN target_type='router' THEN latency_weight END),0) AS averageRouterLatency,
+      SUM(CASE WHEN target_type='external' THEN latency_sum END) / NULLIF(SUM(CASE WHEN target_type='external' THEN latency_weight END),0) AS averageInternetLatency,
+      MAX(maximum) AS maximumLatency, SUM(jitter_sum)/NULLIF(SUM(samples),0) AS averageJitter,
+      SUM(loss_events) AS packetLossEvents,
+      MAX(worst_loss) AS worstPacketLoss,
+      100.0*SUM(sent-received)/NULLIF(SUM(sent),0) AS packetLossPercent,
+      SUM(spikes) AS significantSpikeCount FROM measurement_history WHERE session_id=?`;
     return this.db.prepare(query).get(sessionId);
   }
 
@@ -164,11 +228,11 @@ class PingTrailDatabase {
   }
 
   getAllChartData(sessionId) {
-    const query = `SELECT recorded_at AS recordedAt, target_type AS targetType, target,
-      avg_latency AS avgLatency, packet_loss AS packetLoss, jitter,
-      min_latency AS minLatency, max_latency AS maxLatency
-      FROM network_samples WHERE session_id = ? ORDER BY recorded_at, id`;
-    return this.db.prepare(query).all(sessionId);
+    const query = `SELECT first_at AS recordedAt,target_type AS targetType,target,
+      latency_sum/NULLIF(latency_weight,0) AS avgLatency,100.0*(sent-received)/NULLIF(sent,0) AS packetLoss,
+      jitter_sum/samples AS jitter,minimum AS minLatency,maximum AS maxLatency,tier AS resolutionMs,
+      max_gap_ms AS maxGapMs FROM measurement_history WHERE session_id=? ORDER BY bucket DESC LIMIT 5000`;
+    return this.db.prepare(query).all(sessionId).reverse();
   }
 
   getLatestSpeedTest(sessionId) {
@@ -178,21 +242,21 @@ class PingTrailDatabase {
       unloaded_packet_loss AS unloadedPacketLoss, download_mbps AS downloadMbps,
       download_loaded_latency AS downloadLoadedLatency, download_latency_increase AS downloadLatencyIncrease,
       upload_mbps AS uploadMbps, upload_loaded_latency AS uploadLoadedLatency,
-      upload_latency_increase AS uploadLatencyIncrease, error FROM speed_tests
+      upload_latency_increase AS uploadLatencyIncrease, CASE WHEN error IS NOT NULL THEN 'Connection test could not complete; check connectivity.' END AS error FROM speed_tests
       WHERE session_id = ? ORDER BY recorded_at DESC LIMIT 1`;
     return this.db.prepare(query).get(sessionId) || null;
   }
 
   getProblems(sessionId) {
     const query = `SELECT id, recorded_at AS recordedAt, note FROM problem_markers
-      WHERE session_id = ? ORDER BY recorded_at`;
+      WHERE session_id = ? ORDER BY recorded_at DESC LIMIT 500`;
     return this.db.prepare(query).all(sessionId);
   }
 
   getRecentSessions(limit = 10) {
     const query = `SELECT s.id, s.started_at AS startedAt, s.ended_at AS endedAt,
-      s.status, COUNT(n.id) AS sampleCount
-      FROM sessions s LEFT JOIN network_samples n ON n.session_id = s.id
+      s.status, COALESCE(SUM(n.samples),0) AS sampleCount
+      FROM sessions s LEFT JOIN measurement_history n ON n.session_id = s.id
       GROUP BY s.id ORDER BY s.id DESC LIMIT ?`;
     return this.db.prepare(query).all(limit);
   }

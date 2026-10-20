@@ -1,0 +1,35 @@
+services:
+  pingtrail:
+    build: .
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 160s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # Linux datagram ping sockets, no NET_RAW capability required.
+    sysctls:
+      net.ipv4.ping_group_range: "0 2147483647"
+    environment:
+      PINGTRAIL_ROUTER_TARGET: ${PINGTRAIL_ROUTER_TARGET:?Set an explicit IPv4 router target}
+      PINGTRAIL_API_TOKEN_FILE: /run/secrets/pingtrail_api_token
+      PINGTRAIL_AUTO_SPEED_TESTS: ${PINGTRAIL_AUTO_SPEED_TESTS:-true}
+    secrets: [pingtrail_api_token]
+    volumes:
+      - pingtrail-data:/data
+    networks: [monitoring]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # No ports published. A trusted backend joins the same network.
+secrets:
+  pingtrail_api_token:
+    file: ${PINGTRAIL_TOKEN_FILE:?Set the path to your token file outside the checkout}
+volumes:
+  pingtrail-data:
+networks:
+  monitoring:
+    # Private membership, with outbound access for ICMP and optional HTTPS tests.
+    driver: bridge
